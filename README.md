@@ -24,7 +24,7 @@ To build and run this project, you need:
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/yourusername/ip-analyzer.git
+git clone https://github.com/vschwaberow/ip-analyzer.git
 ```
 
 2. Build using CMake:
