@@ -55,6 +55,24 @@ To analyze an IP address, run the program and enter the IP address with CIDR not
 Enter an IP address with CIDR notation: 192.168.178.0/24
 ```
 
+When prompted, enter an IP address with or without CIDR notation. The tool will automatically detect whether it's an IPv4 or IPv6 address.
+
+## Examples
+
+### IPv4 Example
+
+Input:
+```bash
+Enter an IP address with CIDR notation: 192.168.178.0/24
+```
+## Supported IPv6 Formats
+
+The IP Analyzer supports various IPv6 address formats, including:
+
+- Full notation: `2001:0db8:85a3:0000:0000:8a2e:0370:7334`
+- Compressed notation: `2001:db8:85a3::8a2e:370:7334`
+- IPv4-mapped IPv6 addresses: `::ffff:192.0.2.128`
+
 The program will display detailed information about the IP address.
 
 ## License
