@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: MIT
+// Project: ip-analyzer
+// File: src/main.cc
+// Author: Volker Schwaberow <volker@schwaberow.de>
+// Copyright (c) 2024 Volker Schwaberow
+
 #include "ip_analyzer.hh"
 #include <fmt/color.h>
 #include <fmt/core.h>
@@ -95,16 +101,26 @@ namespace
         {
             PrintHeader("IP Analysis Results");
 
+            const auto ip = analyzer.get_ip();
             const auto [first, last] = analyzer.get_host_range();
-            const std::vector<std::tuple<std::string, std::string, std::string>> rows = {
-                {"IP Address", analyzer.get_ip().to_string(), analyzer.get_ip().to_binary_string()},
-                {"Network Address", analyzer.get_network().to_string(), analyzer.get_network().to_binary_string()},
-                {"Netmask", analyzer.get_netmask().to_string(), analyzer.get_netmask().to_binary_string()},
+
+            std::vector<std::tuple<std::string, std::string, std::string>> rows = {
+                {"IP Address", ip->to_string(), ip->to_binary_string()},
+                {"Network Address", analyzer.get_network()->to_string(), analyzer.get_network()->to_binary_string()},
+                {"Netmask", analyzer.get_netmask()->to_string(), analyzer.get_netmask()->to_binary_string()},
                 {"CIDR Notation", "/" + std::to_string(analyzer.get_cidr()), ""},
-                {"Broadcast Address", analyzer.get_broadcast().to_string(), ""},
-                {"Usable IP Range", (analyzer.get_cidr() == 32) ? analyzer.get_ip().to_string() : fmt::format("{} - {}", first.to_string(), last.to_string()), ""},
-                {"Number of Hosts", std::to_string(analyzer.get_num_hosts()), ""},
+                {"Subnet Range", fmt::format("{} - {}", first->to_string(), last->to_string()), ""},
+                {"Number of Hosts", fmt::format("{}", analyzer.get_num_hosts()), ""},
                 {"Private IP", analyzer.is_private() ? "Yes" : "No", ""}};
+
+            if (ip->is_ipv6())
+            {
+                rows.emplace_back("IPv6 Scope", GetIPv6Scope(ip), "");
+            }
+            else
+            {
+                rows.emplace_back("Broadcast Address", analyzer.get_broadcast()->to_string(), "");
+            }
 
             for (const auto &[label, value, binary] : rows)
             {
@@ -112,6 +128,19 @@ namespace
             }
 
             PrintCopperBar();
+        }
+
+        std::string GetIPv6Scope(const std::shared_ptr<IPAddress> &ip) const
+        {
+            auto ipv6 = std::dynamic_pointer_cast<IPv6Address>(ip);
+            auto bytes = ipv6->to_bytes();
+            if (bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0x80)
+                return "Link-Local";
+            if (bytes[0] == 0xfd || bytes[0] == 0xfc)
+                return "Unique Local";
+            if (bytes[0] == 0xff)
+                return "Multicast";
+            return "Global";
         }
 
         void PrintError(const std::string &message) const
