@@ -14,12 +14,20 @@
 
 uint32_t IPAnalyzer::calculate_ipv4_network(uint32_t ip_int, uint8_t cidr)
 {
+    if (cidr == 0)
+    {
+        return 0;
+    }
     uint32_t mask = 0xFFFFFFFF << (32 - cidr);
     return ip_int & mask;
 }
 
 uint32_t IPAnalyzer::calculate_ipv4_broadcast(uint32_t ip_int, uint8_t cidr)
 {
+    if (cidr == 0)
+    {
+        return 0xFFFFFFFF;
+    }
     uint32_t mask = 0xFFFFFFFF << (32 - cidr);
     return ip_int | ~mask;
 }
