@@ -12,6 +12,18 @@
 #include <regex>
 #include <iomanip>
 
+uint32_t IPAnalyzer::calculate_ipv4_network(uint32_t ip_int, uint8_t cidr)
+{
+    uint32_t mask = 0xFFFFFFFF << (32 - cidr);
+    return ip_int & mask;
+}
+
+uint32_t IPAnalyzer::calculate_ipv4_broadcast(uint32_t ip_int, uint8_t cidr)
+{
+    uint32_t mask = 0xFFFFFFFF << (32 - cidr);
+    return ip_int | ~mask;
+}
+
 IPv6Address::IPv6Address(std::string_view address)
 {
     std::string expanded_address = expand_ipv6_address(address);
@@ -150,8 +162,7 @@ std::shared_ptr<IPAddress> IPAnalyzer::get_network() const
     {
         auto ipv4 = std::dynamic_pointer_cast<IPv4Address>(ip_);
         uint32_t ip_int = ipv4->to_uint32();
-        uint32_t mask = 0xFFFFFFFF << (32 - cidr_);
-        uint32_t network = ip_int & mask;
+        uint32_t network = IPAnalyzer::calculate_ipv4_network(ip_int, cidr_);
         return std::make_shared<IPv4Address>(network);
     }
     else
@@ -209,8 +220,7 @@ std::shared_ptr<IPAddress> IPAnalyzer::get_broadcast() const
     {
         auto ipv4 = std::dynamic_pointer_cast<IPv4Address>(ip_);
         uint32_t ip_int = ipv4->to_uint32();
-        uint32_t mask = 0xFFFFFFFF << (32 - cidr_);
-        uint32_t broadcast = ip_int | ~mask;
+        uint32_t broadcast = IPAnalyzer::calculate_ipv4_broadcast(ip_int, cidr_);
         return std::make_shared<IPv4Address>(broadcast);
     }
     else
