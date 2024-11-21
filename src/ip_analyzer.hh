@@ -76,4 +76,7 @@ public:
 private:
     std::shared_ptr<IPAddress> ip_;
     uint8_t cidr_;
+
+    static uint32_t calculate_ipv4_network(uint32_t ip_int, uint8_t cidr);
+    static uint32_t calculate_ipv4_broadcast(uint32_t ip_int, uint8_t cidr);
 };
