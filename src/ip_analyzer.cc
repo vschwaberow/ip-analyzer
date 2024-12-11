@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <regex>
 #include <iomanip>
+#include <limits>
 
 uint32_t IPAnalyzer::calculate_ipv4_network(uint32_t ip_int, uint8_t cidr)
 {
