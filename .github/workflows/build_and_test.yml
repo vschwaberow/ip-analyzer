@@ -1,0 +1,70 @@
+name: Build and Test on Release
+
+on:
+  release:
+    types:
+      - published
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, macos-12-arm64, windows-latest, freebsd-latest]
+        include:
+          - os: macos-latest
+            arch: amd64
+          - os: macos-12-arm64
+            arch: arm64
+          - os: ubuntu-latest
+            arch: amd64
+          - os: ubuntu-latest
+            arch: arm64
+          - os: windows-latest
+            arch: amd64
+          - os: freebsd-latest
+            arch: amd64
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up C++
+        uses: actions/setup-cpp@v2
+        with:
+          compiler: 'gcc' # Default, overridden below
+
+      - name: Install dependencies
+        if: matrix.os == 'ubuntu-latest' || matrix.os == 'freebsd-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++
+
+      - name: Install dependencies for macOS
+        if: matrix.os == 'macos-latest' || matrix.os == 'macos-12-arm64'
+        run: |
+          brew update
+          brew install cmake
+
+      - name: Install dependencies for Windows
+        if: matrix.os == 'windows-latest'
+        run: |
+          choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System'
+
+      - name: Configure Release Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build Project
+        run: |
+          cmake --build build --config Release
+
+      - name: Run Tests
+        if: ${{ matrix.os != 'windows-latest' }}
+        run: |
+          ctest --test-dir build
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: ip-analyzer-${{ matrix.os }}-${{ matrix.arch }}
+          path: build
