@@ -59,20 +59,42 @@ IPv6Address::IPv6Address(std::string_view address)
 
 std::string IPv6Address::expand_ipv6_address(std::string_view address)
 {
+
     std::string expanded = std::string(address);
-    auto double_colon_pos = expanded.find("::");
+    
+    if (expanded.find(":::") != std::string::npos) {
+        throw std::invalid_argument("Invalid IPv6 address format: ':::' found");
+    }
 
-    if (double_colon_pos != std::string::npos)
-    {
-        std::string left = expanded.substr(0, double_colon_pos);
-        std::string right = expanded.substr(double_colon_pos + 2);
+    size_t first_double_colon = expanded.find("::");
+    if (first_double_colon != std::string::npos) {
+        if (expanded.find("::", first_double_colon + 2) != std::string::npos) {
+            throw std::invalid_argument("Invalid IPv6 address format: multiple '::' occurrences");
+        }
 
-        int left_groups = std::count(left.begin(), left.end(), ':') + 1;
-        int right_groups = std::count(right.begin(), right.end(), ':') + 1;
+        std::string left = expanded.substr(0, first_double_colon);
+        std::string right = expanded.substr(first_double_colon + 2);
+
+        int left_groups = left.empty() ? 0 : std::count(left.begin(), left.end(), ':') + 1;
+        int right_groups = right.empty() ? 0 : std::count(right.begin(), right.end(), ':') + 1;
         int missing_groups = 8 - left_groups - right_groups;
+        if (missing_groups < 0)
+            throw std::invalid_argument("Invalid IPv6 address format: too many groups");
 
-        std::string middle(missing_groups, ':');
-        expanded = left + middle + right;
+        std::string middle;
+        for (int i = 0; i < missing_groups; i++) {
+            if (i > 0)
+                middle += ':';
+            middle += "0000";
+        }
+
+        if (!left.empty())
+            expanded = left + ":" + middle;
+        else
+            expanded = middle;
+
+        if (!right.empty())
+            expanded += ":" + std::string(right);
     }
 
     std::istringstream iss(expanded);
@@ -88,8 +110,8 @@ std::string IPv6Address::expand_ipv6_address(std::string_view address)
 
     while (i < 8)
     {
-        oss << ":0000";
-        i++;
+         oss << ":0000";
+         i++;
     }
 
     return oss.str();
