@@ -59,6 +59,7 @@ IPv6Address::IPv6Address(std::string_view address)
     }
 }
 
+
 std::string IPv6Address::expand_ipv6_address(std::string_view address) {
     if (address.empty()) {
         throw std::invalid_argument("IPv6 address cannot be empty");
