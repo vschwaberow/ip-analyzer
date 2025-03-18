@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: MIT
+// Project: ip-analyzer
+// File: src/tests/ip_analyzer_tests.cc
+// Author: Volker Schwaberow <volker@schwaberow.de>
+// Copyright (c) 2024 Volker Schwaberow
+
 #define CATCH_CONFIG_MAIN
 #include <catch2/catch_all.hpp>
 #include "ip_analyzer.hh"
