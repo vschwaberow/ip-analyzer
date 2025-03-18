@@ -44,8 +44,8 @@ private:
 class IPv6Address : public IPAddress
 {
 public:
-    IPv6Address(std::string_view address);
-    explicit IPv6Address(const std::array<uint8_t, 16> &bytes);
+    explicit IPv6Address(std::string_view address);
+    explicit IPv6Address(const std::array<uint8_t, 16>& bytes);
 
     std::string to_string() const override;
     std::string to_binary_string() const override;
@@ -57,6 +57,8 @@ public:
 private:
     std::array<uint8_t, 16> bytes_;
     static std::string expand_ipv6_address(std::string_view address);
+    static void expand_ipv6_segments(std::string_view segments, std::string& result);
+    static constexpr int hex_char_to_int(char c);
 };
 
 class IPAnalyzer
