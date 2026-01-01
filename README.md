@@ -79,6 +79,10 @@ The program will display detailed information about the IP address.
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
+## Changelog
+
+Release notes are tracked in [CHANGELOG.md](CHANGELOG.md).
+
 ## Pull Requests
 
 If you find a bug or want to contribute to the project, feel free to submit a pull request.
