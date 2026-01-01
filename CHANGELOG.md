@@ -3,6 +3,7 @@
 ## 0.1.5
 - Fix IPv6 `::` expansion to produce correct 8-segment addresses and add regression tests.
 - Fix IPv6 broadcast calculation for non-byte-aligned CIDR and add regression test.
+- Fix IPv6 host range to be computed from the network address and add regression test.
 - Add changelog and bump displayed version to 0.1.5.
 
 ## 0.1.4

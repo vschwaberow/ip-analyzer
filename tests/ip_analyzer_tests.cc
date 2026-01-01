@@ -128,6 +128,13 @@ TEST_CASE("IPAnalyzer IPv6 non-byte-aligned broadcast", "[ipanalyzer][ipv6]") {
     REQUIRE(analyzer.get_broadcast()->to_string() == "2001:ff00:ffff:ffff:ffff:ffff:ffff:ffff");
 }
 
+TEST_CASE("IPAnalyzer IPv6 host range uses network address", "[ipanalyzer][ipv6]") {
+    IPAnalyzer analyzer("2001:0db8:0000:0000:0000:0000:0000:0001/64");
+    auto [first, last] = analyzer.get_host_range();
+    REQUIRE(first->to_string() == "2001:0db8:0000:0000:0000:0000:0000:0001");
+    REQUIRE(last->to_string() == "2001:0db8:0000:0000:ffff:ffff:ffff:fffe");
+}
+
 TEST_CASE("Default CIDR values when not provided", "[ipanalyzer]") {
     SECTION("Default IPv4 CIDR is /32") {
         IPAnalyzer analyzer("192.168.0.1");

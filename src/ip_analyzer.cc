@@ -389,8 +389,9 @@ std::pair<std::shared_ptr<IPAddress>, std::shared_ptr<IPAddress>> IPAnalyzer::ge
     }
     else
     {
-        auto ipv6 = std::dynamic_pointer_cast<IPv6Address>(ip_);
-        std::array<uint8_t, 16> network_bytes = ipv6->to_bytes();
+        auto network = get_network();
+        auto ipv6_network = std::dynamic_pointer_cast<IPv6Address>(network);
+        std::array<uint8_t, 16> network_bytes = ipv6_network->to_bytes();
         std::array<uint8_t, 16> last_bytes = network_bytes;
 
         int fullBytes = cidr_ / 8;
