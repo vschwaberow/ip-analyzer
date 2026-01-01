@@ -313,7 +313,7 @@ std::shared_ptr<IPAddress> IPAnalyzer::get_netmask() const
 {
     if (ip_->is_ipv4())
     {
-        uint32_t mask = 0xFFFFFFFF << (32 - cidr_);
+        uint32_t mask = cidr_ == 0 ? 0 : 0xFFFFFFFF << (32 - cidr_);
         return std::make_shared<IPv4Address>(mask);
     }
     else
@@ -376,7 +376,7 @@ std::pair<std::shared_ptr<IPAddress>, std::shared_ptr<IPAddress>> IPAnalyzer::ge
     {
         auto ipv4 = std::dynamic_pointer_cast<IPv4Address>(ip_);
         uint32_t ip_int = ipv4->to_uint32();
-        uint32_t mask = 0xFFFFFFFF << (32 - cidr_);
+        uint32_t mask = cidr_ == 0 ? 0 : 0xFFFFFFFF << (32 - cidr_);
         uint32_t network = ip_int & mask;
         uint32_t broadcast = ip_int | ~mask;
 
@@ -467,21 +467,42 @@ uint8_t IPAnalyzer::get_cidr() const
 
 IPv4Address::IPv4Address(std::string_view address)
 {
-    std::istringstream iss(address.data());
-    std::string octet;
     int i = 0;
-    while (std::getline(iss, octet, '.'))
+    size_t start = 0;
+    while (start <= address.size())
     {
         if (i >= 4)
         {
             throw std::invalid_argument("Invalid IPv4 address format");
         }
-        int value = std::stoi(octet);
-        if (value < 0 || value > 255)
+
+        size_t end = address.find('.', start);
+        std::string_view segment = (end == std::string_view::npos)
+                                       ? address.substr(start)
+                                       : address.substr(start, end - start);
+        if (segment.empty())
+        {
+            throw std::invalid_argument("Invalid IPv4 address format");
+        }
+
+        uint32_t value = 0;
+        const auto [ptr, ec] = std::from_chars(segment.data(), segment.data() + segment.size(), value);
+        if (ec != std::errc{} || ptr != segment.data() + segment.size())
+        {
+            throw std::invalid_argument("Invalid IPv4 address format");
+        }
+        if (value > 255)
         {
             throw std::invalid_argument("Invalid octet value");
         }
+
         octets_[i++] = static_cast<uint8_t>(value);
+
+        if (end == std::string_view::npos)
+        {
+            break;
+        }
+        start = end + 1;
     }
     if (i != 4)
     {

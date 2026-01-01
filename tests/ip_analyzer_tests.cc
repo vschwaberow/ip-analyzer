@@ -52,6 +52,7 @@ TEST_CASE("Edge cases for IPv4Address", "[ipv4address]") {
         REQUIRE_THROWS_AS(IPv4Address("192.168.0"), std::invalid_argument);
         REQUIRE_THROWS_AS(IPv4Address("192.168.0.1.2"), std::invalid_argument);
         REQUIRE_THROWS_AS(IPv4Address("192.168.0.a"), std::invalid_argument);
+        REQUIRE_THROWS_AS(IPv4Address("192.168.0.1/24"), std::invalid_argument);
     }
 }
 
@@ -60,6 +61,10 @@ TEST_CASE("Edge cases for IPAnalyzer", "[ipanalyzer]") {
         IPAnalyzer analyzer("192.168.0.1/0");
         REQUIRE(analyzer.get_network()->to_string() == "0.0.0.0");
         REQUIRE(analyzer.get_broadcast()->to_string() == "255.255.255.255");
+        REQUIRE(analyzer.get_netmask()->to_string() == "0.0.0.0");
+        auto [first, last] = analyzer.get_host_range();
+        REQUIRE(first->to_string() == "0.0.0.1");
+        REQUIRE(last->to_string() == "255.255.255.254");
         REQUIRE(analyzer.get_num_hosts() == 4294967294);
     }
 
