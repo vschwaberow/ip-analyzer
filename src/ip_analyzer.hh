@@ -56,6 +56,7 @@ public:
 
 private:
     std::array<uint8_t, 16> bytes_;
+    static std::string convert_ipv4_mapped(std::string_view address);
     static std::string expand_ipv6_address(std::string_view address);
     static void expand_ipv6_segments(std::string_view segments, std::string& result);
     static constexpr int hex_char_to_int(char c);
