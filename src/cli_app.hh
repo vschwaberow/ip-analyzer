@@ -49,6 +49,19 @@ public:
             } else if (arg == "--help" || arg == "-h") {
                 PrintHelp();
                 return 0;
+            } else if (arg == "--json") {
+                output_json_ = true;
+            } else if (arg == "--ip") {
+                if (i + 1 >= args.size()) {
+                    fmt::print(OutputColors::kError, "Missing value for --ip\n");
+                    PrintHelp();
+                    return 1;
+                }
+                input_ = args[++i];
+                has_input_ = true;
+            } else if (arg.starts_with("--ip=")) {
+                input_ = std::string(arg.substr(5));
+                has_input_ = true;
             } else if (arg.starts_with("-")) {
                 if (arg.starts_with("--list-tests") || 
                     arg.starts_with("--reporter") || 
@@ -73,7 +86,11 @@ public:
 
         try {
             IPAnalyzer analyzer(input_);
-            PrintResults(analyzer);
+            if (output_json_) {
+                PrintJsonResults(analyzer);
+            } else {
+                PrintResults(analyzer);
+            }
         } catch (const std::exception &e) {
             PrintError(e.what());
             return 1;
@@ -85,11 +102,13 @@ public:
 private:
     std::string input_;
     bool has_input_ = false;
+    bool output_json_ = false;
 
     void PrintPrompt() const;
     void PrintVersion() const;
     void PrintHelp() const;
     void PrintResults(const IPAnalyzer &analyzer) const;
+    void PrintJsonResults(const IPAnalyzer &analyzer) const;
     std::string GetIPv6Scope(const std::shared_ptr<IPAddress> &ip) const;
     void PrintError(const std::string &message) const;
 };

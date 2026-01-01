@@ -10,6 +10,8 @@ IP Analyzer is a command-line tool that provides detailed information about IP a
 - Calculate usable IP range and number of hosts
 - Determine if the IP address is private
 - Present results in a colorful, easy-to-read format
+- Support IPv4 netmask notation (e.g., `/255.255.255.0`)
+- Offer JSON output and a non-interactive `--ip` option
 
 ## Prerequisites
 
@@ -56,6 +58,12 @@ Enter an IP address with CIDR notation: 192.168.178.0/24
 ```
 
 When prompted, enter an IP address with or without CIDR notation. The tool will automatically detect whether it's an IPv4 or IPv6 address.
+
+You can also run non-interactively:
+
+```bash
+./build/ip-analyzer --ip 192.168.1.1/24 --json
+```
 
 ## Examples
 

@@ -6,6 +6,11 @@
 - Fix IPv6 host range to be computed from the network address and add regression test.
 - Fix IPv4 /0 netmask and host range calculation and add regression test.
 - Reject IPv4 segments that contain trailing junk (e.g., `/24`).
+- Add IPv6 compressed output formatting and IPv4-mapped IPv6 parsing with stricter validation.
+- Expand IPv6 scope detection and /127 host range behavior.
+- Support IPv4 netmask notation in CIDR parsing.
+- Add `--json` and `--ip` CLI options.
+- Add tests for compressed IPv6 forms, non-byte-aligned IPv6 ranges, IPv4 /31, and netmask parsing.
 - Add changelog and bump displayed version to 0.1.5.
 
 ## 0.1.4

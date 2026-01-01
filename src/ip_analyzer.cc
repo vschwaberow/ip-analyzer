@@ -38,6 +38,15 @@ uint32_t IPAnalyzer::calculate_ipv4_broadcast(uint32_t ip_int, uint8_t cidr)
 
 IPv6Address::IPv6Address(std::string_view address)
 {
+    bool is_ipv4_mapped = false;
+    std::string converted_address;
+    if (address.find('.') != std::string_view::npos)
+    {
+        converted_address = convert_ipv4_mapped(address);
+        address = converted_address;
+        is_ipv4_mapped = true;
+    }
+
     std::string expanded_address = expand_ipv6_address(address);
     std::fill(bytes_.begin(), bytes_.end(), 0);
 
@@ -58,6 +67,95 @@ IPv6Address::IPv6Address(std::string_view address)
     {
         throw std::invalid_argument("Invalid IPv6 address format");
     }
+
+    if (is_ipv4_mapped)
+    {
+        for (size_t index = 0; index < 10; ++index)
+        {
+            if (bytes_[index] != 0)
+            {
+                throw std::invalid_argument("Only IPv4-mapped IPv6 addresses are supported");
+            }
+        }
+        if (bytes_[10] != 0xFF || bytes_[11] != 0xFF)
+        {
+            throw std::invalid_argument("Only IPv4-mapped IPv6 addresses are supported");
+        }
+    }
+}
+
+std::string IPv6Address::convert_ipv4_mapped(std::string_view address)
+{
+    size_t last_colon = address.rfind(':');
+    if (last_colon == std::string_view::npos)
+    {
+        throw std::invalid_argument("Invalid IPv6 address format");
+    }
+
+    std::string_view ipv4_part = address.substr(last_colon + 1);
+    std::string_view prefix = address.substr(0, last_colon);
+
+    std::array<uint8_t, 4> octets{};
+    size_t start = 0;
+    int index = 0;
+    while (start <= ipv4_part.size())
+    {
+        if (index >= 4)
+        {
+            throw std::invalid_argument("Invalid IPv4-mapped IPv6 address format");
+        }
+
+        size_t end = ipv4_part.find('.', start);
+        std::string_view segment = (end == std::string_view::npos)
+                                       ? ipv4_part.substr(start)
+                                       : ipv4_part.substr(start, end - start);
+        if (segment.empty())
+        {
+            throw std::invalid_argument("Invalid IPv4-mapped IPv6 address format");
+        }
+
+        uint32_t value = 0;
+        const auto [ptr, ec] = std::from_chars(segment.data(), segment.data() + segment.size(), value);
+        if (ec != std::errc{} || ptr != segment.data() + segment.size() || value > 255)
+        {
+            throw std::invalid_argument("Invalid IPv4-mapped IPv6 address format");
+        }
+
+        octets[index++] = static_cast<uint8_t>(value);
+
+        if (end == std::string_view::npos)
+        {
+            break;
+        }
+        start = end + 1;
+    }
+
+    if (index != 4)
+    {
+        throw std::invalid_argument("Invalid IPv4-mapped IPv6 address format");
+    }
+
+    uint16_t high = static_cast<uint16_t>((octets[0] << 8) | octets[1]);
+    uint16_t low = static_cast<uint16_t>((octets[2] << 8) | octets[3]);
+
+    char high_buffer[5];
+    char low_buffer[5];
+    std::snprintf(high_buffer, sizeof(high_buffer), "%04x", high);
+    std::snprintf(low_buffer, sizeof(low_buffer), "%04x", low);
+
+    std::string result;
+    if (!prefix.empty())
+    {
+        result.append(prefix);
+        if (!prefix.ends_with(':'))
+        {
+            result.push_back(':');
+        }
+    }
+    result.append(high_buffer);
+    result.push_back(':');
+    result.append(low_buffer);
+    return result;
 }
 
 
@@ -203,15 +301,96 @@ IPv6Address::IPv6Address(const std::array<uint8_t, 16> &bytes) : bytes_(bytes) {
 
 std::string IPv6Address::to_string() const
 {
-    std::ostringstream oss;
-    for (size_t i = 0; i < 16; i += 2)
+    bool is_ipv4_mapped = true;
+    for (size_t index = 0; index < 10; ++index)
     {
-        if (i > 0)
-            oss << ':';
-        oss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(bytes_[i]);
-        oss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(bytes_[i + 1]);
+        if (bytes_[index] != 0)
+        {
+            is_ipv4_mapped = false;
+            break;
+        }
     }
-    return oss.str();
+    if (is_ipv4_mapped && bytes_[10] == 0xFF && bytes_[11] == 0xFF)
+    {
+        std::ostringstream oss;
+        oss << "::ffff:";
+        oss << static_cast<int>(bytes_[12]) << '.'
+            << static_cast<int>(bytes_[13]) << '.'
+            << static_cast<int>(bytes_[14]) << '.'
+            << static_cast<int>(bytes_[15]);
+        return oss.str();
+    }
+
+    std::array<uint16_t, 8> groups{};
+    for (size_t i = 0; i < 8; ++i)
+    {
+        groups[i] = static_cast<uint16_t>((bytes_[i * 2] << 8) | bytes_[i * 2 + 1]);
+    }
+
+    size_t best_start = 0;
+    size_t best_len = 0;
+    size_t current_start = 0;
+    size_t current_len = 0;
+    for (size_t i = 0; i < groups.size(); ++i)
+    {
+        if (groups[i] == 0)
+        {
+            if (current_len == 0)
+            {
+                current_start = i;
+            }
+            current_len++;
+        }
+        else
+        {
+            if (current_len > best_len)
+            {
+                best_start = current_start;
+                best_len = current_len;
+            }
+            current_len = 0;
+        }
+    }
+    if (current_len > best_len)
+    {
+        best_start = current_start;
+        best_len = current_len;
+    }
+    if (best_len < 2)
+    {
+        best_len = 0;
+    }
+
+    std::ostringstream oss;
+    for (size_t i = 0; i < groups.size(); ++i)
+    {
+        if (best_len > 0 && i == best_start)
+        {
+            if (i == 0)
+            {
+                oss << "::";
+            }
+            else
+            {
+                oss << "::";
+            }
+            i += best_len - 1;
+            continue;
+        }
+
+        if (i > 0 && !(best_len > 0 && i == best_start + best_len))
+        {
+            oss << ':';
+        }
+        oss << std::hex << std::nouppercase << groups[i];
+    }
+
+    std::string result = oss.str();
+    if (result.empty())
+    {
+        return "::";
+    }
+    return result;
 }
 
 std::string IPv6Address::to_binary_string() const
@@ -249,11 +428,32 @@ IPAnalyzer::IPAnalyzer(std::string_view ip_cidr)
         ip_str = ip_cidr.substr(0, slash_pos);
         const std::string_view cidr_str = ip_cidr.substr(slash_pos + 1);
         uint16_t cidr_value{};
-        const auto result = std::from_chars(cidr_str.data(), cidr_str.data() + cidr_str.size(), cidr_value);
-        
-        if (result.ec != std::errc{})
+        if (cidr_str.find('.') != std::string_view::npos)
         {
-            throw std::invalid_argument("Invalid CIDR format");
+            if (ip_str.contains(':'))
+            {
+                throw std::invalid_argument("IPv4 netmask cannot be used with IPv6");
+            }
+            IPv4Address netmask(cidr_str);
+            uint32_t mask = netmask.to_uint32();
+            uint32_t working = mask;
+            while (working & 0x80000000)
+            {
+                cidr_value++;
+                working <<= 1;
+            }
+            if (working != 0)
+            {
+                throw std::invalid_argument("Invalid IPv4 netmask");
+            }
+        }
+        else
+        {
+            const auto result = std::from_chars(cidr_str.data(), cidr_str.data() + cidr_str.size(), cidr_value);
+            if (result.ec != std::errc{} || result.ptr != cidr_str.data() + cidr_str.size())
+            {
+                throw std::invalid_argument("Invalid CIDR format");
+            }
         }
         cidr_ = static_cast<uint8_t>(cidr_value);
     }
@@ -397,16 +597,16 @@ std::pair<std::shared_ptr<IPAddress>, std::shared_ptr<IPAddress>> IPAnalyzer::ge
         int fullBytes = cidr_ / 8;
         int remainingBits = cidr_ % 8;
 
-        for (int i = fullBytes; i < 16; ++i)
-        {
-            last_bytes[i] = 0xFF;
-        }
         if (remainingBits > 0)
         {
             last_bytes[fullBytes] |= static_cast<uint8_t>(0xFF >> remainingBits);
         }
+        for (int i = fullBytes + (remainingBits > 0 ? 1 : 0); i < 16; ++i)
+        {
+            last_bytes[i] = 0xFF;
+        }
 
-        if (cidr_ < 128)
+        if (cidr_ < 127)
         {
             for (int i = 15; i >= 0; --i)
             {
