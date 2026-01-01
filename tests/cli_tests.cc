@@ -116,6 +116,37 @@ TEST_CASE("Command line flags", "[cli]") {
     }
 }
 
+TEST_CASE("JSON output contains schema and version", "[cli]") {
+    using namespace ip_analyzer;
+
+    StdoutCapture capture;
+    const char* args[] = {"ip-analyzer", "--json", "--ip", "192.168.0.1/24"};
+    int result = IPAnalyzerApp().Run(std::span<const char*>(args, 4));
+    std::string output = capture.get_output();
+
+    REQUIRE(result == 0);
+    REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("\"schema\": \"ip-analyzer/1\""));
+    REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring(std::string(kVersion)));
+}
+
+TEST_CASE("Stdin input supports multiple lines", "[cli]") {
+    using namespace ip_analyzer;
+
+    std::istringstream input("192.168.0.1/24\n2001:db8::1/64\n");
+    std::streambuf* old_buf = std::cin.rdbuf(input.rdbuf());
+
+    StdoutCapture capture;
+    const char* args[] = {"ip-analyzer", "--stdin", "--compact"};
+    int result = IPAnalyzerApp().Run(std::span<const char*>(args, 3));
+    std::string output = capture.get_output();
+
+    std::cin.rdbuf(old_buf);
+
+    REQUIRE(result == 0);
+    REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("192.168.0.1"));
+    REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("2001:db8::1"));
+}
+
 TEST_CASE("Version flag output", "[cli]") {
     using namespace ip_analyzer;
     

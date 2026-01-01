@@ -14,6 +14,7 @@
 #include <string_view>
 #include <vector>
 #include <span>
+#include <unistd.h>
 
 namespace ip_analyzer {
 
@@ -32,14 +33,16 @@ struct OutputColors {
     static constexpr auto kError = fg(fmt::color::red) | fmt::emphasis::bold;
 };
 
-void PrintCopperBar();
-void PrintHeader(const std::string &text);
-void PrintRow(const std::string &label, const std::string &value, const std::string &binary = "");
+void PrintCopperBar(bool color_enabled);
+void PrintHeader(const std::string &text, bool color_enabled);
+void PrintRow(const std::string &label, const std::string &value, const std::string &binary,
+              bool color_enabled);
 
 class IPAnalyzerApp {
 public:
     template<typename CharT>
     int Run(std::span<CharT*> args) {
+        color_enabled_ = ::isatty(STDOUT_FILENO) != 0;
         for (size_t i = 1; i < args.size(); ++i) {
             std::string_view arg{args[i]};
             
@@ -51,6 +54,12 @@ public:
                 return 0;
             } else if (arg == "--json") {
                 output_json_ = true;
+            } else if (arg == "--compact") {
+                compact_ = true;
+            } else if (arg == "--no-color") {
+                color_enabled_ = false;
+            } else if (arg == "--stdin") {
+                read_stdin_ = true;
             } else if (arg == "--ip") {
                 if (i + 1 >= args.size()) {
                     fmt::print(OutputColors::kError, "Missing value for --ip\n");
@@ -75,6 +84,16 @@ public:
                 input_ = arg;
                 has_input_ = true;
             }
+        }
+
+        if (read_stdin_ && has_input_) {
+            fmt::print(OutputColors::kError, "Cannot combine --stdin with a direct IP input\n");
+            PrintHelp();
+            return 1;
+        }
+
+        if (read_stdin_) {
+            return RunFromStdin();
         }
 
         if (!has_input_) {
@@ -103,12 +122,18 @@ private:
     std::string input_;
     bool has_input_ = false;
     bool output_json_ = false;
+    bool compact_ = false;
+    bool color_enabled_ = true;
+    bool read_stdin_ = false;
 
     void PrintPrompt() const;
     void PrintVersion() const;
     void PrintHelp() const;
     void PrintResults(const IPAnalyzer &analyzer) const;
     void PrintJsonResults(const IPAnalyzer &analyzer) const;
+    void PrintJsonObject(const IPAnalyzer &analyzer, const std::string &indent,
+                         bool trailing_comma) const;
+    int RunFromStdin();
     std::string GetIPv6Scope(const std::shared_ptr<IPAddress> &ip) const;
     void PrintError(const std::string &message) const;
 };

@@ -11,7 +11,8 @@ IP Analyzer is a command-line tool that provides detailed information about IP a
 - Determine if the IP address is private
 - Present results in a colorful, easy-to-read format
 - Support IPv4 netmask notation (e.g., `/255.255.255.0`)
-- Offer JSON output and a non-interactive `--ip` option
+- Offer JSON output and non-interactive `--ip` and `--stdin` modes
+- Provide `--compact` and `--no-color` output modes
 
 ## Prerequisites
 
@@ -65,6 +66,14 @@ You can also run non-interactively:
 ./build/ip-analyzer --ip 192.168.1.1/24 --json
 ```
 
+The JSON output includes a schema identifier (`ip-analyzer/1`) and the app version.
+
+You can process multiple inputs from stdin:
+
+```bash
+printf "192.168.1.1/24\n2001:db8::1/64\n" | ./build/ip-analyzer --stdin --compact
+```
+
 ## Examples
 
 ### IPv4 Example
@@ -79,7 +88,7 @@ The IP Analyzer supports various IPv6 address formats, including:
 
 - Full notation: `2001:0db8:85a3:0000:0000:8a2e:0370:7334`
 - Compressed notation: `2001:db8:85a3::8a2e:370:7334`
-- IPv4-mapped IPv6 addresses: `::ffff:192.0.2.128`
+- IPv4-mapped IPv6 addresses: `::ffff:192.0.2.128` (outputs as `::ffff:192.0.2.128`)
 
 The program will display detailed information about the IP address.
 

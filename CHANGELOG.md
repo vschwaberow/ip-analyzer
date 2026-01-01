@@ -11,6 +11,8 @@
 - Support IPv4 netmask notation in CIDR parsing.
 - Add `--json` and `--ip` CLI options.
 - Add tests for compressed IPv6 forms, non-byte-aligned IPv6 ranges, IPv4 /31, and netmask parsing.
+- Add JSON schema/version fields and stdin/compact/no-color CLI modes.
+- Add tests and docs for IPv4-mapped IPv6 and stdin/JSON output.
 - Add changelog and bump displayed version to 0.1.5.
 
 ## 0.1.4
