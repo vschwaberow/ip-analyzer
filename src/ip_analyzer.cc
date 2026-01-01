@@ -10,6 +10,7 @@
 #include <bitset>
 #include <algorithm>
 #include <regex>
+#include <vector>
 #include <iomanip>
 #include <limits>
 #include <charconv>
@@ -76,67 +77,87 @@ std::string IPv6Address::expand_ipv6_address(std::string_view address) {
         throw std::invalid_argument("Invalid IPv6 address format: multiple '::' occurrences");
     }
 
-    int segment_count = 0;
-    int colon_count = 0;
-    
-    for (char c : address) {
-        if (c == ':') {
-            colon_count++;
+    auto split_segments = [](std::string_view input) {
+        std::vector<std::string_view> segments;
+        size_t start = 0;
+        while (start <= input.size()) {
+            size_t end = input.find(':', start);
+            std::string_view segment = (end == std::string_view::npos)
+                                           ? input.substr(start)
+                                           : input.substr(start, end - start);
+            if (segment.empty()) {
+                throw std::invalid_argument("Invalid IPv6 address format");
+            }
+            segments.push_back(segment);
+            if (end == std::string_view::npos) {
+                break;
+            }
+            start = end + 1;
         }
-    }
-    
-    if (has_double_colon) {
-        segment_count = colon_count - 1;
-        if (address.front() == ':') segment_count--;
-        if (address.back() == ':') segment_count--;
-    } else {
-        segment_count = colon_count + 1;
-    }
-    
-    int missing_segments = 8 - segment_count;
-    if (missing_segments < 0) {
-        throw std::invalid_argument("Invalid IPv6 address format: too many segments");
-    }
-    
-    std::string result;
-    result.reserve(39);
-    
+        return segments;
+    };
+
+    auto pad_segment = [](std::string_view segment) {
+        if (segment.empty()) {
+            return std::string("0000");
+        }
+        if (segment.size() > 4) {
+            throw std::invalid_argument("Invalid IPv6 address format: segment too long");
+        }
+        int value = 0;
+        for (char c : segment) {
+            int digit = hex_char_to_int(c);
+            if (digit < 0) {
+                throw std::invalid_argument("Invalid IPv6 address format: non-hex digit");
+            }
+            value = (value << 4) + digit;
+        }
+        char hex_buffer[5];
+        std::snprintf(hex_buffer, sizeof(hex_buffer), "%04x", value);
+        return std::string(hex_buffer);
+    };
+
+    std::vector<std::string_view> segments;
     if (has_double_colon) {
         std::string_view before = address.substr(0, double_colon_pos);
-        
-        std::string_view after = address.substr(
-            std::min(address.size(), double_colon_pos + 2));
-        
+        std::string_view after = address.substr(double_colon_pos + 2);
+
         if (!before.empty()) {
-            expand_ipv6_segments(before, result);
+            auto before_segments = split_segments(before);
+            segments.insert(segments.end(), before_segments.begin(), before_segments.end());
+        }
+
+        std::vector<std::string_view> after_segments;
+        if (!after.empty()) {
+            after_segments = split_segments(after);
+        }
+
+        int explicit_segments = static_cast<int>(segments.size() + after_segments.size());
+        int missing_segments = 8 - explicit_segments;
+        if (missing_segments < 1) {
+            throw std::invalid_argument("Invalid IPv6 address format: too many segments");
+        }
+
+        for (int i = 0; i < missing_segments; ++i) {
+            segments.emplace_back();
+        }
+        segments.insert(segments.end(), after_segments.begin(), after_segments.end());
+    } else {
+        segments = split_segments(address);
+        if (segments.size() != 8) {
+            throw std::invalid_argument("Invalid IPv6 address format: incorrect segment count");
+        }
+    }
+
+    std::string result;
+    result.reserve(39);
+    for (size_t i = 0; i < segments.size(); ++i) {
+        if (i > 0) {
             result.push_back(':');
         }
-        
-        for (int i = 0; i < missing_segments; ++i) {
-            result.append("0000:");
-        }
-        
-        if (!after.empty()) {
-            if (result.back() == ':' && after.front() == ':') {
-                expand_ipv6_segments(after.substr(1), result);
-            } else {
-                expand_ipv6_segments(after, result);
-            }
-        }
-    } else {
-        expand_ipv6_segments(address, result);
+        result.append(pad_segment(segments[i]));
     }
-    
-    int final_segments = 1;
-    for (char c : result) {
-        if (c == ':') final_segments++;
-    }
-    
-    while (final_segments < 8) {
-        result.append(":0000");
-        final_segments++;
-    }
-    
+
     return result;
 }
 

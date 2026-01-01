@@ -18,7 +18,7 @@
 namespace ip_analyzer {
 
 constexpr std::string_view kAppName = "ip-analyzer";
-constexpr std::string_view kVersion = "0.1.4";
+constexpr std::string_view kVersion = "0.1.5";
 constexpr std::string_view kAuthor = "Volker Schwaberow <volker@schwaberow.de>";
 
 constexpr int kWidth = 80;

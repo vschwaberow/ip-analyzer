@@ -101,6 +101,12 @@ TEST_CASE("IPv6Address construction and methods", "[ipv6address]") {
     REQUIRE(ip.is_private() == false);
 }
 
+TEST_CASE("IPv6Address compressed notation expansion", "[ipv6address]") {
+    REQUIRE(IPv6Address("::").to_string() == "0000:0000:0000:0000:0000:0000:0000:0000");
+    REQUIRE(IPv6Address("::1").to_string() == "0000:0000:0000:0000:0000:0000:0000:0001");
+    REQUIRE(IPv6Address("2001:db8::1").to_string() == "2001:0db8:0000:0000:0000:0000:0000:0001");
+}
+
 TEST_CASE("IPAnalyzer IPv6 functionality", "[ipanalyzer][ipv6]") {
     IPAnalyzer analyzer("2001:0db8:0000:0000:0000:0000:0000:0001/64");
     REQUIRE(analyzer.get_ip()->to_string() == "2001:0db8:0000:0000:0000:0000:0000:0001");
