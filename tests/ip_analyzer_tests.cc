@@ -123,6 +123,11 @@ TEST_CASE("IPAnalyzer IPv6 functionality", "[ipanalyzer][ipv6]") {
     REQUIRE(analyzer.get_cidr() == 64);
 }
 
+TEST_CASE("IPAnalyzer IPv6 non-byte-aligned broadcast", "[ipanalyzer][ipv6]") {
+    IPAnalyzer analyzer("2001:8000::1/9");
+    REQUIRE(analyzer.get_broadcast()->to_string() == "2001:ff00:ffff:ffff:ffff:ffff:ffff:ffff");
+}
+
 TEST_CASE("Default CIDR values when not provided", "[ipanalyzer]") {
     SECTION("Default IPv4 CIDR is /32") {
         IPAnalyzer analyzer("192.168.0.1");

@@ -351,7 +351,12 @@ std::shared_ptr<IPAddress> IPAnalyzer::get_broadcast() const
         int fullBytes = cidr_ / 8;
         int remainingBits = cidr_ % 8;
 
-        for (int i = fullBytes; i < 16; ++i)
+        if (remainingBits > 0)
+        {
+            ip_bytes[fullBytes] &= static_cast<uint8_t>(0xFF << (8 - remainingBits));
+        }
+
+        for (int i = fullBytes + (remainingBits > 0 ? 1 : 0); i < 16; ++i)
         {
             ip_bytes[i] = 0xFF;
         }
