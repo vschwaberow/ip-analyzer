@@ -7,8 +7,9 @@
 #pragma once
 
 #include "ip_analyzer.hh"
-#include <fmt/color.h>
-#include <fmt/core.h>
+#include <concepts>
+#include <print>
+#include <format>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -18,19 +19,23 @@
 
 namespace ip_analyzer {
 
+template<typename T>
+concept StringLike = std::convertible_to<T, std::string_view>;
+
 constexpr std::string_view kAppName = "ip-analyzer";
-constexpr std::string_view kVersion = "0.1.5";
+constexpr std::string_view kVersion = "0.1.6";
 constexpr std::string_view kAuthor = "Volker Schwaberow <volker@schwaberow.de>";
 
 constexpr int kWidth = 80;
 
 struct OutputColors {
-    static constexpr auto kHeader = fmt::emphasis::bold | fg(fmt::color::white);
-    static constexpr auto kLabel = fg(fmt::color::yellow);
-    static constexpr auto kValue = fg(fmt::color::green);
-    static constexpr auto kBinary = fg(fmt::color::magenta);
-    static constexpr auto kPrompt = fg(fmt::color::cyan) | fmt::emphasis::bold;
-    static constexpr auto kError = fg(fmt::color::red) | fmt::emphasis::bold;
+    static constexpr std::string_view kReset = "\033[0m";
+    static constexpr std::string_view kHeader = "\033[1;37m";
+    static constexpr std::string_view kLabel = "\033[33m";
+    static constexpr std::string_view kValue = "\033[32m";
+    static constexpr std::string_view kBinary = "\033[35m";
+    static constexpr std::string_view kPrompt = "\033[1;36m";
+    static constexpr std::string_view kError = "\033[1;31m";
 };
 
 void PrintCopperBar(bool color_enabled);
@@ -40,8 +45,8 @@ void PrintRow(const std::string &label, const std::string &value, const std::str
 
 class IPAnalyzerApp {
 public:
-    template<typename CharT>
-    int Run(std::span<CharT*> args) {
+    template<StringLike T, size_t Extent = std::dynamic_extent>
+    int Run(std::span<T, Extent> args) {
         color_enabled_ = ::isatty(STDOUT_FILENO) != 0;
         for (size_t i = 1; i < args.size(); ++i) {
             std::string_view arg{args[i]};
@@ -52,6 +57,8 @@ public:
             } else if (arg == "--help" || arg == "-h") {
                 PrintHelp();
                 return 0;
+            } else if (arg == "--interactive" || arg == "-i") {
+                interactive_ = true;
             } else if (arg == "--json") {
                 output_json_ = true;
             } else if (arg == "--compact") {
@@ -62,11 +69,11 @@ public:
                 read_stdin_ = true;
             } else if (arg == "--ip") {
                 if (i + 1 >= args.size()) {
-                    fmt::print(OutputColors::kError, "Missing value for --ip\n");
+                    PrintError("Missing value for --ip");
                     PrintHelp();
                     return 1;
                 }
-                input_ = args[++i];
+                input_ = std::string(args[++i]);
                 has_input_ = true;
             } else if (arg.starts_with("--ip=")) {
                 input_ = std::string(arg.substr(5));
@@ -77,7 +84,7 @@ public:
                     arg.starts_with("--durations")) {
                     continue;
                 }
-                fmt::print(OutputColors::kError, "Unknown option: {}\n", arg);
+                PrintError(std::format("Unknown option: {}", arg));
                 PrintHelp();
                 return 1;
             } else {
@@ -86,8 +93,14 @@ public:
             }
         }
 
+        if (interactive_ && (read_stdin_ || has_input_)) {
+            PrintError("Cannot combine --interactive with --stdin or direct IP input");
+            PrintHelp();
+            return 1;
+        }
+
         if (read_stdin_ && has_input_) {
-            fmt::print(OutputColors::kError, "Cannot combine --stdin with a direct IP input\n");
+            PrintError("Cannot combine --stdin with a direct IP input");
             PrintHelp();
             return 1;
         }
@@ -97,9 +110,14 @@ public:
         }
 
         if (!has_input_) {
-            PrintPrompt();
-            if (!std::getline(std::cin, input_)) {
-                return 1;
+            if (interactive_) {
+                PrintPrompt();
+                if (!std::getline(std::cin, input_)) {
+                    return 1;
+                }
+            } else {
+                PrintHelp();
+                return 0;
             }
         }
 
@@ -121,6 +139,7 @@ public:
 private:
     std::string input_;
     bool has_input_ = false;
+    bool interactive_ = false;
     bool output_json_ = false;
     bool compact_ = false;
     bool color_enabled_ = true;

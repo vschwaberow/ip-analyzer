@@ -12,24 +12,19 @@ void PrintCopperBar(bool color_enabled)
 {
     if (!color_enabled)
     {
-        fmt::print("{}\n", std::string(kWidth, '='));
+        std::println("{}", std::string(kWidth, '='));
         return;
     }
 
-    const auto copper_gradient = [](int i)
+    for (int i = 0; i < kWidth; ++i)
     {
         constexpr int kMaxColor = 255;
         const int r = std::min(kMaxColor, i * kMaxColor / kWidth);
         const int g = std::min(kMaxColor, (kWidth - i) * kMaxColor / kWidth);
         const int b = std::min(kMaxColor, std::abs(kWidth / 2 - i) * 2 * kMaxColor / kWidth);
-        return fmt::rgb(r, g, b);
-    };
-
-    for (int i = 0; i < kWidth; ++i)
-    {
-        fmt::print(fg(copper_gradient(i)), "█");
+        std::print("\033[38;2;{};{};{}m█", r, g, b);
     }
-    fmt::print("\n");
+    std::println("\033[0m");
 }
 
 void PrintHeader(const std::string &text, bool color_enabled)
@@ -37,11 +32,11 @@ void PrintHeader(const std::string &text, bool color_enabled)
     PrintCopperBar(color_enabled);
     if (color_enabled)
     {
-        fmt::print(OutputColors::kHeader, "{:^{}}\n", text, kWidth);
+        std::println("{}{:^{}}{}", OutputColors::kHeader, text, kWidth, OutputColors::kReset);
     }
     else
     {
-        fmt::print("{:^{}}\n", text, kWidth);
+        std::println("{:^{}}", text, kWidth);
     }
     PrintCopperBar(color_enabled);
 }
@@ -51,33 +46,33 @@ void PrintRow(const std::string &label, const std::string &value, const std::str
 {
     if (color_enabled)
     {
-        fmt::print(OutputColors::kLabel, "{:<20}", label);
+        std::print("{}{:<20}{}", OutputColors::kLabel, label, OutputColors::kReset);
     }
     else
     {
-        fmt::print("{:<20}", label);
+        std::print("{:<20}", label);
     }
     if (binary.empty())
     {
         if (color_enabled)
         {
-            fmt::print(OutputColors::kValue, "{}\n", value);
+            std::println("{}{}{}", OutputColors::kValue, value, OutputColors::kReset);
         }
         else
         {
-            fmt::print("{}\n", value);
+            std::println("{}", value);
         }
     }
     else
     {
         if (color_enabled)
         {
-            fmt::print(OutputColors::kValue, "{:<20}", value);
-            fmt::print(OutputColors::kBinary, "{}\n", binary);
+            std::print("{}{:<20}{}", OutputColors::kValue, value, OutputColors::kReset);
+            std::println("{}{}{}", OutputColors::kBinary, binary, OutputColors::kReset);
         }
         else
         {
-            fmt::print("{:<20}{}\n", value, binary);
+            std::println("{:<20}{}", value, binary);
         }
     }
 }
@@ -86,36 +81,39 @@ void IPAnalyzerApp::PrintPrompt() const
 {
     if (color_enabled_)
     {
-        fmt::print(OutputColors::kPrompt, "Enter IP address with CIDR (e.g., 192.168.0.1/24): ");
+        std::print("{}Enter IP address with CIDR (e.g., 192.168.0.1/24): {}", OutputColors::kPrompt, OutputColors::kReset);
     }
     else
     {
-        fmt::print("Enter IP address with CIDR (e.g., 192.168.0.1/24): ");
+        std::print("Enter IP address with CIDR (e.g., 192.168.0.1/24): ");
     }
+    std::fflush(stdout);
 }
 
 void IPAnalyzerApp::PrintVersion() const
 {
-    std::cout << fmt::format("{} version {}\n", kAppName, kVersion);
-    std::cout << fmt::format("Copyright (c) 2024 {}\n", kAuthor);
+    std::println("{} version {}", kAppName, kVersion);
+    std::println("Copyright (c) 2024 {}", kAuthor);
 }
 
 void IPAnalyzerApp::PrintHelp() const
 {
     PrintVersion();
-    fmt::print("\nUsage: {} [options] [ip-address/cidr]\n\n", kAppName);
-    fmt::print("Options:\n");
-    fmt::print("  -h, --help     Show this help message and exit\n");
-    fmt::print("  -v, --version  Show version information and exit\n\n");
-    fmt::print("  --json         Output results as JSON\n");
-    fmt::print("  --compact      Use compact, non-decorated output\n");
-    fmt::print("  --no-color     Disable colored output\n");
-    fmt::print("  --stdin        Read IP/CIDR values from stdin\n");
-    fmt::print("  --ip <value>   Provide the IP/CIDR without prompting\n\n");
-    fmt::print("Examples:\n");
-    fmt::print("  {} 192.168.1.1/24\n", kAppName);
-    fmt::print("  {} 2001:db8::1/64\n", kAppName);
-    fmt::print("  {} 2001:db8::/64\n", kAppName);
+    std::println("\nUsage: {} [options] [ip-address/cidr]\n", kAppName);
+    std::println("Options:");
+    std::println("  -h, --help         Show this help message and exit");
+    std::println("  -v, --version      Show version information and exit\n");
+    std::println("  -i, --interactive  Prompt for IP input interactively");
+    std::println("  --json             Output results as JSON");
+    std::println("  --compact          Use compact, non-decorated output");
+    std::println("  --no-color         Disable colored output");
+    std::println("  --stdin            Read IP/CIDR values from stdin");
+    std::println("  --ip <value>       Provide the IP/CIDR without prompting\n");
+    std::println("Examples:");
+    std::println("  {} 192.168.1.1/24", kAppName);
+    std::println("  {} 2001:db8::1/64", kAppName);
+    std::println("  {} 2001:db8::/64", kAppName);
+    std::println("  {} --interactive", kAppName);
 }
 
 void IPAnalyzerApp::PrintResults(const IPAnalyzer &analyzer) const
@@ -133,8 +131,8 @@ void IPAnalyzerApp::PrintResults(const IPAnalyzer &analyzer) const
         {"Network Address", analyzer.get_network()->to_string(), analyzer.get_network()->to_binary_string()},
         {"Netmask", analyzer.get_netmask()->to_string(), analyzer.get_netmask()->to_binary_string()},
         {"CIDR Notation", "/" + std::to_string(analyzer.get_cidr()), ""},
-        {"Subnet Range", fmt::format("{} - {}", first->to_string(), last->to_string()), ""},
-        {"Number of Hosts", fmt::format("{}", analyzer.get_num_hosts()), ""},
+        {"Subnet Range", std::format("{} - {}", first->to_string(), last->to_string()), ""},
+        {"Number of Hosts", std::format("{}", analyzer.get_num_hosts()), ""},
         {"Private IP", analyzer.is_private() ? "Yes" : "No", ""}};
 
     if (ip->is_ipv6())
@@ -150,7 +148,7 @@ void IPAnalyzerApp::PrintResults(const IPAnalyzer &analyzer) const
     {
         for (const auto &[label, value, binary] : rows)
         {
-            fmt::print("{}: {}\n", label, value);
+            std::println("{}: {}", label, value);
         }
     }
     else
@@ -178,39 +176,52 @@ void IPAnalyzerApp::PrintJsonObject(const IPAnalyzer &analyzer, const std::strin
     const auto ip = analyzer.get_ip();
     const auto [first, last] = analyzer.get_host_range();
 
-    fmt::print("{}{{\n", indent);
-    fmt::print("{}  \"schema\": \"ip-analyzer/1\",\n", indent);
-    fmt::print("{}  \"version\": \"{}\",\n", indent, kVersion);
-    fmt::print("{}  \"ip\": \"{}\",\n", indent, ip->to_string());
-    fmt::print("{}  \"network\": \"{}\",\n", indent, analyzer.get_network()->to_string());
-    fmt::print("{}  \"netmask\": \"{}\",\n", indent, analyzer.get_netmask()->to_string());
-    fmt::print("{}  \"cidr\": {},\n", indent, analyzer.get_cidr());
-    fmt::print("{}  \"range_first\": \"{}\",\n", indent, first->to_string());
-    fmt::print("{}  \"range_last\": \"{}\",\n", indent, last->to_string());
-    fmt::print("{}  \"num_hosts\": {},\n", indent, analyzer.get_num_hosts());
-    fmt::print("{}  \"private\": {},\n", indent, analyzer.is_private() ? "true" : "false");
+    std::println("{}{{", indent);
+    std::println("{}  \"schema\": \"ip-analyzer/1\",", indent);
+    std::println("{}  \"version\": \"{}\",", indent, kVersion);
+    std::println("{}  \"ip\": \"{}\",", indent, ip->to_string());
+    std::println("{}  \"network\": \"{}\",", indent, analyzer.get_network()->to_string());
+    std::println("{}  \"netmask\": \"{}\",", indent, analyzer.get_netmask()->to_string());
+    std::println("{}  \"cidr\": {},", indent, analyzer.get_cidr());
+    std::println("{}  \"range_first\": \"{}\",", indent, first->to_string());
+    std::println("{}  \"range_last\": \"{}\",", indent, last->to_string());
+    std::println("{}  \"num_hosts\": {},", indent, analyzer.get_num_hosts());
+    std::println("{}  \"private\": {},", indent, analyzer.is_private() ? "true" : "false");
 
     if (ip->is_ipv6())
     {
-        fmt::print("{}  \"scope\": \"{}\"\n", indent, GetIPv6Scope(ip));
+        std::println("{}  \"scope\": \"{}\"", indent, GetIPv6Scope(ip));
     }
     else
     {
-        fmt::print("{}  \"broadcast\": \"{}\"\n", indent, analyzer.get_broadcast()->to_string());
+        std::println("{}  \"broadcast\": \"{}\"", indent, analyzer.get_broadcast()->to_string());
     }
 
-    fmt::print("{}}}{}\n", indent, trailing_comma ? "," : "");
+    std::println("{}}}{}", indent, trailing_comma ? "," : "");
 }
 
 int IPAnalyzerApp::RunFromStdin()
 {
+    constexpr auto trim_view = [](std::string_view sv) noexcept {
+        while (!sv.empty() && (sv.front() == ' ' || sv.front() == '\t'))
+        {
+            sv.remove_prefix(1);
+        }
+        while (!sv.empty() && (sv.back() == ' ' || sv.back() == '\t' || sv.back() == '\r'))
+        {
+            sv.remove_suffix(1);
+        }
+        return sv;
+    };
+
     std::vector<std::string> inputs;
     std::string line;
     while (std::getline(std::cin, line))
     {
-        if (!line.empty())
+        std::string_view trimmed = trim_view(line);
+        if (!trimmed.empty())
         {
-            inputs.push_back(line);
+            inputs.emplace_back(trimmed);
         }
     }
 
@@ -221,7 +232,7 @@ int IPAnalyzerApp::RunFromStdin()
 
     if (output_json_)
     {
-        fmt::print("[\n");
+        std::println("[");
     }
 
     for (size_t index = 0; index < inputs.size(); ++index)
@@ -237,7 +248,7 @@ int IPAnalyzerApp::RunFromStdin()
             {
                 if (index > 0)
                 {
-                    fmt::print("\n");
+                    std::print("\n");
                 }
                 PrintResults(analyzer);
             }
@@ -246,7 +257,7 @@ int IPAnalyzerApp::RunFromStdin()
         {
             if (output_json_)
             {
-                fmt::print("]\n");
+                std::println("]");
             }
             PrintError(e.what());
             return 1;
@@ -255,7 +266,7 @@ int IPAnalyzerApp::RunFromStdin()
 
     if (output_json_)
     {
-        fmt::print("]\n");
+        std::println("]");
     }
 
     return 0;
@@ -298,11 +309,11 @@ void IPAnalyzerApp::PrintError(const std::string &message) const
 {
     if (color_enabled_)
     {
-        fmt::print(OutputColors::kError, "Error: {}\n", message);
+        std::println("{}Error: {}{}", OutputColors::kError, message, OutputColors::kReset);
     }
     else
     {
-        fmt::print("Error: {}\n", message);
+        std::println("Error: {}", message);
     }
 }
 
