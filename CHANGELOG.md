@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.6
+- Modernize codebase to C++23 using standard `<print>`, `<format>`, and `<bit>` (`std::countl_one`, `std::countr_zero`).
+- Remove third-party runtime dependency `fmt` and package manager `CPM.cmake`.
+- Switch testing dependency management to standard CMake `FetchContent` and update Catch2 to `v3.15.3`.
+- Update CLI behavior: require explicit `--interactive` / `-i` flag for interactive mode; display help by default when invoked without arguments.
+- Fix CIDR integer overflow vulnerability during parsing (`/256`, `/288`, `/1000`).
+- Add robust whitespace and CRLF trimming for inputs and stdin batch mode.
+- Eliminate raw pointers across the codebase, replacing manual buffer operations with RAII stream guards and `std::span` / `std::array`.
+
 ## 0.1.5
 - Fix IPv6 `::` expansion to produce correct 8-segment addresses and add regression tests.
 - Fix IPv6 broadcast calculation for non-byte-aligned CIDR and add regression test.
