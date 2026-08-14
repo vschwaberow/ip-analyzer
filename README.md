@@ -18,9 +18,11 @@ IP Analyzer is a command-line tool that provides detailed information about IP a
 
 To build and run this project, you need:
 
-- C++17 compatible compiler (e.g., GCC 7+, Clang 5+, or MSVC 2017+)
-- CMake 3.10 or higher
-- fmt library (will be automatically downloaded if not found)
+- C++23 compatible compiler with `<print>` support:
+  - GCC >= 14.1
+  - Clang >= 18 (with libc++ >= 18)
+  - MSVC 2022 (v17.7+)
+- CMake 3.22 or higher
 
 ## Building the Project
 
@@ -51,16 +53,21 @@ cmake --build build --config Release
 
 ## Usage
 
-To analyze an IP address, run the program and enter the IP address with CIDR notation:
+To analyze an IP address directly, provide it as an argument:
 
 ```bash
-./build/ip-analyzer
-Enter an IP address with CIDR notation: 192.168.178.0/24
+./build/ip-analyzer 192.168.178.0/24
 ```
 
-When prompted, enter an IP address with or without CIDR notation. The tool will automatically detect whether it's an IPv4 or IPv6 address.
+To run in interactive mode, use `--interactive` or `-i`:
 
-You can also run non-interactively:
+```bash
+./build/ip-analyzer --interactive
+```
+
+The tool will automatically detect whether it's an IPv4 or IPv6 address.
+
+You can also pass arguments via `--ip`:
 
 ```bash
 ./build/ip-analyzer --ip 192.168.1.1/24 --json

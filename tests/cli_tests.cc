@@ -24,16 +24,29 @@ public:
         
         dup2(pipe_fds[1], STDOUT_FILENO);
         close(pipe_fds[1]);
+        pipe_fds[1] = -1;
     }
     
     ~StdoutCapture() {
-        fflush(stdout);
-        dup2(old_stdout, STDOUT_FILENO);
-        close(old_stdout);
+        if (old_stdout != -1) {
+            fflush(stdout);
+            dup2(old_stdout, STDOUT_FILENO);
+            close(old_stdout);
+            old_stdout = -1;
+        }
+        if (pipe_fds[0] != -1) {
+            close(pipe_fds[0]);
+            pipe_fds[0] = -1;
+        }
     }
     
     std::string get_output() {
         fflush(stdout);
+        if (old_stdout != -1) {
+            dup2(old_stdout, STDOUT_FILENO);
+            close(old_stdout);
+            old_stdout = -1;
+        }
 
         int flags = fcntl(pipe_fds[0], F_GETFL);
         fcntl(pipe_fds[0], F_SETFL, flags | O_NONBLOCK);
@@ -57,14 +70,33 @@ public:
             }
         }
         
-        close(pipe_fds[0]);
+        if (pipe_fds[0] != -1) {
+            close(pipe_fds[0]);
+            pipe_fds[0] = -1;
+        }
         
         return result;
     }
     
 private:
-    int old_stdout;
-    int pipe_fds[2];
+    int old_stdout = -1;
+    int pipe_fds[2] = {-1, -1};
+};
+
+class CinCapture {
+public:
+    explicit CinCapture(std::istream& stream)
+        : original_buffer_(std::cin.rdbuf(stream.rdbuf())) {}
+
+    ~CinCapture() {
+        std::cin.rdbuf(original_buffer_);
+    }
+
+    CinCapture(const CinCapture&) = delete;
+    CinCapture& operator=(const CinCapture&) = delete;
+
+private:
+    decltype(std::cin.rdbuf()) original_buffer_{};
 };
 
 class MockIPAnalyzerApp : public ip_analyzer::IPAnalyzerApp {
@@ -84,14 +116,35 @@ public:
 TEST_CASE("Command line flags", "[cli]") {
     using namespace ip_analyzer;
     
+    SECTION("No arguments displays help") {
+        StdoutCapture capture;
+        constexpr std::array args = {"ip-analyzer"};
+        int result = IPAnalyzerApp().Run(std::span(args));
+        std::string output = capture.get_output();
+
+        REQUIRE(result == 0);
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("Usage:"));
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("--interactive"));
+    }
+
+    SECTION("Help flag (--help)") {
+        StdoutCapture capture;
+        constexpr std::array args = {"ip-analyzer", "--help"};
+        int result = IPAnalyzerApp().Run(std::span(args));
+        std::string output = capture.get_output();
+
+        REQUIRE(result == 0);
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("Usage:"));
+    }
+
     SECTION("Version flag short form (-v)") {
         int result;
         std::string output;
         
         {
             StdoutCapture capture;
-            const char* args[] = {"ip-analyzer", "-v"};
-            result = IPAnalyzerApp().Run(std::span<const char*>(args, 2));
+            constexpr std::array args = {"ip-analyzer", "-v"};
+            result = IPAnalyzerApp().Run(std::span(args));
             output = capture.get_output();
         }
         
@@ -104,8 +157,8 @@ TEST_CASE("Command line flags", "[cli]") {
     SECTION("Version flag long form (--version)") {
         StdoutCapture capture;
         
-        const char* args[] = {"ip-analyzer", "--version"};
-        int result = IPAnalyzerApp().Run(std::span<const char*>(args, 2));
+        constexpr std::array args = {"ip-analyzer", "--version"};
+        int result = IPAnalyzerApp().Run(std::span(args));
         
         std::string output = capture.get_output();
         
@@ -116,12 +169,52 @@ TEST_CASE("Command line flags", "[cli]") {
     }
 }
 
+TEST_CASE("Interactive mode handling", "[cli]") {
+    using namespace ip_analyzer;
+
+    SECTION("Interactive flag with input") {
+        std::istringstream input("192.168.1.1/24\n");
+        CinCapture cin_guard(input);
+
+        StdoutCapture capture;
+        constexpr std::array args = {"ip-analyzer", "--interactive", "--compact"};
+        int result = IPAnalyzerApp().Run(std::span(args));
+        std::string output = capture.get_output();
+
+        REQUIRE(result == 0);
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("192.168.1.1"));
+    }
+
+    SECTION("Interactive flag short form (-i)") {
+        std::istringstream input("10.0.0.1/8\n");
+        CinCapture cin_guard(input);
+
+        StdoutCapture capture;
+        constexpr std::array args = {"ip-analyzer", "-i", "--compact"};
+        int result = IPAnalyzerApp().Run(std::span(args));
+        std::string output = capture.get_output();
+
+        REQUIRE(result == 0);
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("10.0.0.1"));
+    }
+
+    SECTION("Interactive combined with direct IP produces error") {
+        StdoutCapture capture;
+        constexpr std::array args = {"ip-analyzer", "--interactive", "--ip", "192.168.1.1/24"};
+        int result = IPAnalyzerApp().Run(std::span(args));
+        std::string output = capture.get_output();
+
+        REQUIRE(result == 1);
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("Cannot combine --interactive"));
+    }
+}
+
 TEST_CASE("JSON output contains schema and version", "[cli]") {
     using namespace ip_analyzer;
 
     StdoutCapture capture;
-    const char* args[] = {"ip-analyzer", "--json", "--ip", "192.168.0.1/24"};
-    int result = IPAnalyzerApp().Run(std::span<const char*>(args, 4));
+    constexpr std::array args = {"ip-analyzer", "--json", "--ip", "192.168.0.1/24"};
+    int result = IPAnalyzerApp().Run(std::span(args));
     std::string output = capture.get_output();
 
     REQUIRE(result == 0);
@@ -132,19 +225,33 @@ TEST_CASE("JSON output contains schema and version", "[cli]") {
 TEST_CASE("Stdin input supports multiple lines", "[cli]") {
     using namespace ip_analyzer;
 
-    std::istringstream input("192.168.0.1/24\n2001:db8::1/64\n");
-    std::streambuf* old_buf = std::cin.rdbuf(input.rdbuf());
+    SECTION("Unix newlines") {
+        std::istringstream input("192.168.0.1/24\n2001:db8::1/64\n");
+        CinCapture cin_guard(input);
 
-    StdoutCapture capture;
-    const char* args[] = {"ip-analyzer", "--stdin", "--compact"};
-    int result = IPAnalyzerApp().Run(std::span<const char*>(args, 3));
-    std::string output = capture.get_output();
+        StdoutCapture capture;
+        constexpr std::array args = {"ip-analyzer", "--stdin", "--compact"};
+        int result = IPAnalyzerApp().Run(std::span(args));
+        std::string output = capture.get_output();
 
-    std::cin.rdbuf(old_buf);
+        REQUIRE(result == 0);
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("192.168.0.1"));
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("2001:db8::1"));
+    }
 
-    REQUIRE(result == 0);
-    REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("192.168.0.1"));
-    REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("2001:db8::1"));
+    SECTION("Windows CRLF newlines and whitespace") {
+        std::istringstream input("  192.168.0.1/24  \r\n 2001:db8::1/64 \r\n");
+        CinCapture cin_guard(input);
+
+        StdoutCapture capture;
+        constexpr std::array args = {"ip-analyzer", "--stdin", "--compact"};
+        int result = IPAnalyzerApp().Run(std::span(args));
+        std::string output = capture.get_output();
+
+        REQUIRE(result == 0);
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("192.168.0.1"));
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("2001:db8::1"));
+    }
 }
 
 TEST_CASE("Version flag output", "[cli]") {

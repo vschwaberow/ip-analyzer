@@ -91,6 +91,9 @@ TEST_CASE("Edge cases for IPAnalyzer", "[ipanalyzer]") {
 
     SECTION("Invalid CIDR values") {
         REQUIRE_THROWS_AS(IPAnalyzer("192.168.0.1/33"), std::invalid_argument);
+        REQUIRE_THROWS_AS(IPAnalyzer("192.168.0.1/256"), std::invalid_argument);
+        REQUIRE_THROWS_AS(IPAnalyzer("192.168.0.1/288"), std::invalid_argument);
+        REQUIRE_THROWS_AS(IPAnalyzer("192.168.0.1/1000"), std::invalid_argument);
         REQUIRE_THROWS_AS(IPAnalyzer("192.168.0.1/-1"), std::invalid_argument);
     }
 
@@ -99,6 +102,22 @@ TEST_CASE("Edge cases for IPAnalyzer", "[ipanalyzer]") {
         REQUIRE(analyzer.get_cidr() == 24);
         REQUIRE(analyzer.get_netmask()->to_string() == "255.255.255.0");
         REQUIRE_THROWS_AS(IPAnalyzer("192.168.0.1/255.0.255.0"), std::invalid_argument);
+    }
+
+    SECTION("Whitespace trimming") {
+        IPAnalyzer analyzer1("  192.168.0.1/24  ");
+        REQUIRE(analyzer1.get_ip()->to_string() == "192.168.0.1");
+        REQUIRE(analyzer1.get_cidr() == 24);
+
+        IPAnalyzer analyzer2("192.168.0.1 / 24");
+        REQUIRE(analyzer2.get_ip()->to_string() == "192.168.0.1");
+        REQUIRE(analyzer2.get_cidr() == 24);
+
+        IPAnalyzer analyzer3("  2001:db8::1/64  ");
+        REQUIRE(analyzer3.get_ip()->to_string() == "2001:db8::1");
+        REQUIRE(analyzer3.get_cidr() == 64);
+
+        REQUIRE_THROWS_AS(IPAnalyzer("   "), std::invalid_argument);
     }
 
     SECTION("Private IP ranges") {
@@ -200,6 +219,9 @@ TEST_CASE("Invalid IPv6 addresses and CIDR values", "[ipv6address]") {
     }
     SECTION("Invalid IPv6 CIDR") {
         REQUIRE_THROWS_AS(IPAnalyzer("2001:0db8:0000:0000:0000:0000:0000:0001/129"), std::invalid_argument);
+        REQUIRE_THROWS_AS(IPAnalyzer("2001:0db8:0000:0000:0000:0000:0000:0001/256"), std::invalid_argument);
+        REQUIRE_THROWS_AS(IPAnalyzer("2001:0db8:0000:0000:0000:0000:0000:0001/300"), std::invalid_argument);
+        REQUIRE_THROWS_AS(IPAnalyzer("2001:0db8:0000:0000:0000:0000:0000:0001/1000"), std::invalid_argument);
         REQUIRE_THROWS_AS(IPAnalyzer("2001:0db8:0000:0000:0000:0000:0000:0001/-1"), std::invalid_argument);
     }
 }

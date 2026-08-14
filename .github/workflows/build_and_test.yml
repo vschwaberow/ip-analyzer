@@ -12,38 +12,36 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, macos-12-arm64, windows-latest]
         include:
+          - os: ubuntu-latest
+            arch: amd64
+            cxx: g++-14
+            cc: gcc-14
           - os: macos-latest
-            arch: amd64
-          - os: macos-12-arm64
             arch: arm64
-          - os: ubuntu-latest
-            arch: amd64
-          - os: ubuntu-latest
-            arch: arm64
+            cxx: clang++
+            cc: clang
           - os: windows-latest
             arch: amd64
+            cxx: cl
+            cc: cl
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Install dependencies for Linux
-        if: matrix.os == 'ubuntu-latest'
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake g++
+          sudo apt-get install -y cmake g++-14 gcc-14
+          echo "CXX=g++-14" >> $GITHUB_ENV
+          echo "CC=gcc-14" >> $GITHUB_ENV
 
       - name: Install dependencies for macOS
-        if: matrix.os == 'macos-latest' || matrix.os == 'macos-12-arm64'
+        if: runner.os == 'macOS'
         run: |
           brew update
           brew install cmake
-
-      - name: Install dependencies for Windows
-        if: matrix.os == 'windows-latest'
-        run: |
-          choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System'
 
       - name: Configure Release Build
         run: |
@@ -54,12 +52,12 @@ jobs:
           cmake --build build --config Release
 
       - name: Run Tests
-        if: ${{ matrix.os != 'windows-latest' }}
+        if: runner.os != 'Windows'
         run: |
-          ctest --test-dir build
+          ctest --test-dir build --output-on-failure
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ip-analyzer-${{ matrix.os }}-${{ matrix.arch }}
-          path: build
+          path: build/ip-analyzer*
