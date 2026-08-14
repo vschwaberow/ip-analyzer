@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <sstream>
 #include <bitset>
+#include <bit>
 #include <algorithm>
 #include <regex>
 #include <vector>
@@ -22,7 +23,7 @@ uint32_t IPAnalyzer::calculate_ipv4_network(uint32_t ip_int, uint8_t cidr)
     {
         return 0;
     }
-    uint32_t mask = 0xFFFFFFFF << (32 - cidr);
+    uint32_t mask = 0xFFFFFFFFU << (32 - cidr);
     return ip_int & mask;
 }
 
@@ -30,9 +31,9 @@ uint32_t IPAnalyzer::calculate_ipv4_broadcast(uint32_t ip_int, uint8_t cidr)
 {
     if (cidr == 0)
     {
-        return 0xFFFFFFFF;
+        return 0xFFFFFFFFU;
     }
-    uint32_t mask = 0xFFFFFFFF << (32 - cidr);
+    uint32_t mask = 0xFFFFFFFFU << (32 - cidr);
     return ip_int | ~mask;
 }
 
@@ -259,37 +260,6 @@ std::string IPv6Address::expand_ipv6_address(std::string_view address) {
     return result;
 }
 
-void IPv6Address::expand_ipv6_segments(std::string_view segments, std::string& result) {
-    size_t start = 0;
-    size_t end = segments.find(':', start);
-    
-    while (start != std::string_view::npos) {
-        std::string_view segment = (end != std::string_view::npos) ? 
-            segments.substr(start, end - start) : segments.substr(start);
-        
-        if (!segment.empty()) {
-            int value = 0;
-            for (char c : segment) {
-                value = value * 16 + hex_char_to_int(c);
-            }
-            
-            char hex_buffer[5];
-            std::snprintf(hex_buffer, sizeof(hex_buffer), "%04x", value);
-            result.append(hex_buffer);
-        } else {
-            result.append("0000");
-        }
-        
-        if (end != std::string_view::npos) {
-            result.push_back(':');
-            start = end + 1;
-            end = segments.find(':', start);
-        } else {
-            break;
-        }
-    }
-}
-
 constexpr int IPv6Address::hex_char_to_int(char c) {
     if (c >= '0' && c <= '9') return c - '0';
     if (c >= 'a' && c <= 'f') return c - 'a' + 10;
@@ -366,14 +336,7 @@ std::string IPv6Address::to_string() const
     {
         if (best_len > 0 && i == best_start)
         {
-            if (i == 0)
-            {
-                oss << "::";
-            }
-            else
-            {
-                oss << "::";
-            }
+            oss << "::";
             i += best_len - 1;
             continue;
         }
@@ -415,6 +378,29 @@ std::array<uint8_t, 16> IPv6Address::to_bytes() const
 
 IPAnalyzer::IPAnalyzer(std::string_view ip_cidr)
 {
+    constexpr auto is_space = [](char c) noexcept {
+        return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+    };
+
+    constexpr auto trim = [is_space](std::string_view sv) noexcept {
+        while (!sv.empty() && is_space(sv.front()))
+        {
+            sv.remove_prefix(1);
+        }
+        while (!sv.empty() && is_space(sv.back()))
+        {
+            sv.remove_suffix(1);
+        }
+        return sv;
+    };
+
+    ip_cidr = trim(ip_cidr);
+
+    if (ip_cidr.empty())
+    {
+        throw std::invalid_argument("Empty IP address input");
+    }
+
     auto slash_pos = ip_cidr.find('/');
     std::string_view ip_str;
 
@@ -425,9 +411,10 @@ IPAnalyzer::IPAnalyzer(std::string_view ip_cidr)
     }
     else
     {
-        ip_str = ip_cidr.substr(0, slash_pos);
-        const std::string_view cidr_str = ip_cidr.substr(slash_pos + 1);
-        uint16_t cidr_value{};
+        ip_str = trim(ip_cidr.substr(0, slash_pos));
+        const std::string_view cidr_str = trim(ip_cidr.substr(slash_pos + 1));
+
+        uint32_t cidr_value{};
         if (cidr_str.find('.') != std::string_view::npos)
         {
             if (ip_str.contains(':'))
@@ -436,16 +423,13 @@ IPAnalyzer::IPAnalyzer(std::string_view ip_cidr)
             }
             IPv4Address netmask(cidr_str);
             uint32_t mask = netmask.to_uint32();
-            uint32_t working = mask;
-            while (working & 0x80000000)
-            {
-                cidr_value++;
-                working <<= 1;
-            }
-            if (working != 0)
+            int leading_ones = std::countl_one(mask);
+            int trailing_zeros = std::countr_zero(mask);
+            if (leading_ones + trailing_zeros != 32)
             {
                 throw std::invalid_argument("Invalid IPv4 netmask");
             }
+            cidr_value = static_cast<uint32_t>(leading_ones);
         }
         else
         {
@@ -455,20 +439,32 @@ IPAnalyzer::IPAnalyzer(std::string_view ip_cidr)
                 throw std::invalid_argument("Invalid CIDR format");
             }
         }
+
+        if (ip_str.contains(':'))
+        {
+            if (cidr_value > 128)
+            {
+                throw std::invalid_argument("Invalid IPv6 CIDR value");
+            }
+        }
+        else
+        {
+            if (cidr_value > 32)
+            {
+                throw std::invalid_argument("Invalid IPv4 CIDR value");
+            }
+        }
+
         cidr_ = static_cast<uint8_t>(cidr_value);
     }
 
     if (ip_str.contains(':'))
     {
         ip_ = std::make_shared<IPv6Address>(ip_str);
-        if (cidr_ > 128)
-            throw std::invalid_argument("Invalid IPv6 CIDR value");
     }
     else
     {
         ip_ = std::make_shared<IPv4Address>(ip_str);
-        if (cidr_ > 32)
-            throw std::invalid_argument("Invalid IPv4 CIDR value");
     }
 }
 
