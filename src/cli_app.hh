@@ -29,7 +29,7 @@ template<typename T>
 concept StringLike = std::convertible_to<T, std::string_view>;
 
 constexpr std::string_view kAppName = "ip-analyzer";
-constexpr std::string_view kVersion = "0.1.7";
+constexpr std::string_view kVersion = "0.1.8";
 constexpr std::string_view kAuthor = "Volker Schwaberow <volker@schwaberow.de>";
 
 constexpr int kWidth = 80;

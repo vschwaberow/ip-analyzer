@@ -6,6 +6,9 @@ on:
       - published
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ${{ matrix.os }}
@@ -14,49 +17,89 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            arch: amd64
-            cxx: g++-14
-            cc: gcc-14
+            artifact: ip-analyzer-linux-x86_64
+            binary_path: build/ip-analyzer
+            linker_flags: -static-libgcc -static-libstdc++
+            osx_archs: ""
+            msvc_runtime: ""
           - os: macos-latest
-            arch: arm64
-            cxx: clang++
-            cc: clang
+            artifact: ip-analyzer-macos-universal
+            binary_path: build/ip-analyzer
+            linker_flags: ""
+            osx_archs: arm64;x86_64
+            msvc_runtime: ""
           - os: windows-latest
-            arch: amd64
-            cxx: cl
-            cc: cl
+            artifact: ip-analyzer-windows-x86_64.exe
+            binary_path: build/Release/ip-analyzer.exe
+            linker_flags: ""
+            osx_archs: ""
+            msvc_runtime: MultiThreaded
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Install dependencies for Linux
+      - name: Install Linux toolchain
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake g++-14 gcc-14
-          echo "CXX=g++-14" >> $GITHUB_ENV
-          echo "CC=gcc-14" >> $GITHUB_ENV
-
-      - name: Install dependencies for macOS
-        if: runner.os == 'macOS'
-        run: |
-          brew update
-          brew install cmake
+          echo "CXX=g++-14" >> "$GITHUB_ENV"
+          echo "CC=gcc-14" >> "$GITHUB_ENV"
 
       - name: Configure Release Build
+        shell: bash
+        env:
+          LINKER_FLAGS: ${{ matrix.linker_flags }}
+          OSX_ARCHS: ${{ matrix.osx_archs }}
+          MSVC_RUNTIME: ${{ matrix.msvc_runtime }}
         run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          extra=()
+          if [[ -n "$LINKER_FLAGS" ]]; then
+            extra+=("-DCMAKE_EXE_LINKER_FLAGS=$LINKER_FLAGS")
+          fi
+          if [[ -n "$OSX_ARCHS" ]]; then
+            extra+=("-DCMAKE_OSX_ARCHITECTURES=$OSX_ARCHS")
+          fi
+          if [[ -n "$MSVC_RUNTIME" ]]; then
+            extra+=("-DCMAKE_MSVC_RUNTIME_LIBRARY=$MSVC_RUNTIME")
+          fi
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release "${extra[@]}"
 
       - name: Build Project
-        run: |
-          cmake --build build --config Release
+        run: cmake --build build --config Release
 
       - name: Run Tests
-        run: |
-          ctest --test-dir build --output-on-failure -C Release
+        run: ctest --test-dir build --output-on-failure -C Release
 
-      - name: Upload Artifacts
+      - name: Stage binary
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp "${{ matrix.binary_path }}" "dist/${{ matrix.artifact }}"
+          if [[ "${{ runner.os }}" != "Windows" ]]; then
+            chmod +x "dist/${{ matrix.artifact }}"
+            strip "dist/${{ matrix.artifact }}" || true
+          fi
+
+      - name: Smoke test binary
+        shell: bash
+        run: |
+          "./dist/${{ matrix.artifact }}" --version
+          "./dist/${{ matrix.artifact }}" --ip 192.168.1.1/24 --json --no-color
+
+      - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ip-analyzer-${{ matrix.os }}-${{ matrix.arch }}
-          path: build/ip-analyzer*
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}
+          if-no-files-found: error
+
+      - name: Attach binary to GitHub Release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >
+          gh release upload
+          "${{ github.event.release.tag_name }}"
+          "dist/${{ matrix.artifact }}"
+          --clobber

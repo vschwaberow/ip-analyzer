@@ -103,6 +103,14 @@ The program will display detailed information about the IP address.
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
+## Releases
+
+Published GitHub Releases include ready-to-run binaries:
+
+- `ip-analyzer-linux-x86_64`
+- `ip-analyzer-macos-universal`
+- `ip-analyzer-windows-x86_64.exe`
+
 ## Changelog
 
 Release notes are tracked in [CHANGELOG.md](CHANGELOG.md).
