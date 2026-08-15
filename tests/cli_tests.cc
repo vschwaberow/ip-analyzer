@@ -240,6 +240,45 @@ TEST_CASE("IPv4-mapped JSON scope", "[cli]") {
     REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("\"private\": true"));
 }
 
+TEST_CASE("--ip does not consume following flags", "[cli]") {
+    using namespace ip_analyzer;
+
+    SECTION("--ip --json <address> emits JSON") {
+        StdoutCapture capture;
+        constexpr std::array args = {
+            "ip-analyzer", "--ip", "--json", "192.168.0.1/24"};
+        int result = IPAnalyzerApp().Run(std::span(args));
+        std::string output = capture.get_output();
+
+        REQUIRE(result == 0);
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("\"schema\": \"ip-analyzer/1\""));
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("192.168.0.1"));
+    }
+
+    SECTION("--ip --compact <address> uses compact output") {
+        StdoutCapture capture;
+        constexpr std::array args = {
+            "ip-analyzer", "--ip", "--compact", "--no-color", "10.0.0.1/8"};
+        int result = IPAnalyzerApp().Run(std::span(args));
+        std::string output = capture.get_output();
+
+        REQUIRE(result == 0);
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("10.0.0.1"));
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("IP Address:"));
+        REQUIRE_THAT(output, !Catch::Matchers::ContainsSubstring("====="));
+    }
+
+    SECTION("--ip followed only by flags reports a missing value") {
+        StdoutCapture capture;
+        constexpr std::array args = {"ip-analyzer", "--ip", "--json"};
+        int result = IPAnalyzerApp().Run(std::span(args));
+        std::string output = capture.get_output();
+
+        REQUIRE(result == 1);
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("Missing value for --ip"));
+    }
+}
+
 TEST_CASE("JSON output contains schema and version", "[cli]") {
     using namespace ip_analyzer;
 
