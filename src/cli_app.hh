@@ -15,6 +15,7 @@
 #include <string_view>
 #include <vector>
 #include <span>
+#include <ranges>
 #include <cstdio>
 #ifdef _WIN32
 #include <io.h>
@@ -57,9 +58,15 @@ public:
 #else
         color_enabled_ = ::isatty(STDOUT_FILENO) != 0;
 #endif
-        for (size_t i = 1; i < args.size(); ++i) {
-            std::string_view arg{args[i]};
-            
+        bool expect_ip_value = false;
+        for (std::string_view arg : args | std::views::drop(1)) {
+            if (expect_ip_value) {
+                input_ = std::string(arg);
+                has_input_ = true;
+                expect_ip_value = false;
+                continue;
+            }
+
             if (arg == "--version" || arg == "-v") {
                 PrintVersion();
                 return 0;
@@ -77,19 +84,13 @@ public:
             } else if (arg == "--stdin") {
                 read_stdin_ = true;
             } else if (arg == "--ip") {
-                if (i + 1 >= args.size()) {
-                    PrintError("Missing value for --ip");
-                    PrintHelp();
-                    return 1;
-                }
-                input_ = std::string(args[++i]);
-                has_input_ = true;
+                expect_ip_value = true;
             } else if (arg.starts_with("--ip=")) {
                 input_ = std::string(arg.substr(5));
                 has_input_ = true;
             } else if (arg.starts_with("-")) {
-                if (arg.starts_with("--list-tests") || 
-                    arg.starts_with("--reporter") || 
+                if (arg.starts_with("--list-tests") ||
+                    arg.starts_with("--reporter") ||
                     arg.starts_with("--durations")) {
                     continue;
                 }
@@ -100,6 +101,12 @@ public:
                 input_ = arg;
                 has_input_ = true;
             }
+        }
+
+        if (expect_ip_value) {
+            PrintError("Missing value for --ip");
+            PrintHelp();
+            return 1;
         }
 
         if (interactive_ && (read_stdin_ || has_input_)) {

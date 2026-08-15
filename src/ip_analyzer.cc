@@ -10,6 +10,7 @@
 #include <bitset>
 #include <bit>
 #include <algorithm>
+#include <ranges>
 #include <regex>
 #include <vector>
 #include <iomanip>
@@ -71,12 +72,10 @@ IPv6Address::IPv6Address(std::string_view address)
 
     if (is_ipv4_mapped)
     {
-        for (size_t index = 0; index < 10; ++index)
+        if (std::ranges::any_of(bytes_ | std::views::take(10),
+                                [](uint8_t byte) { return byte != 0; }))
         {
-            if (bytes_[index] != 0)
-            {
-                throw std::invalid_argument("Only IPv4-mapped IPv6 addresses are supported");
-            }
+            throw std::invalid_argument("Only IPv4-mapped IPv6 addresses are supported");
         }
         if (bytes_[10] != 0xFF || bytes_[11] != 0xFF)
         {
@@ -237,9 +236,7 @@ std::string IPv6Address::expand_ipv6_address(std::string_view address) {
             throw std::invalid_argument("Invalid IPv6 address format: too many segments");
         }
 
-        for (int i = 0; i < missing_segments; ++i) {
-            segments.emplace_back();
-        }
+        segments.resize(segments.size() + static_cast<size_t>(missing_segments));
         segments.insert(segments.end(), after_segments.begin(), after_segments.end());
     } else {
         segments = split_segments(address);
@@ -250,11 +247,11 @@ std::string IPv6Address::expand_ipv6_address(std::string_view address) {
 
     std::string result;
     result.reserve(39);
-    for (size_t i = 0; i < segments.size(); ++i) {
+    for (const auto [i, segment] : std::views::enumerate(segments)) {
         if (i > 0) {
             result.push_back(':');
         }
-        result.append(pad_segment(segments[i]));
+        result.append(pad_segment(segment));
     }
 
     return result;
@@ -271,14 +268,9 @@ IPv6Address::IPv6Address(const std::array<uint8_t, 16> &bytes) : bytes_(bytes) {
 
 bool IPv6Address::is_ipv4_mapped() const
 {
-    for (size_t index = 0; index < 10; ++index)
-    {
-        if (bytes_[index] != 0)
-        {
-            return false;
-        }
-    }
-    return bytes_[10] == 0xFF && bytes_[11] == 0xFF;
+    return std::ranges::all_of(bytes_ | std::views::take(10),
+                               [](uint8_t byte) { return byte == 0; })
+           && bytes_[10] == 0xFF && bytes_[11] == 0xFF;
 }
 
 std::string IPv6Address::to_string() const
@@ -295,18 +287,18 @@ std::string IPv6Address::to_string() const
     }
 
     std::array<uint16_t, 8> groups{};
-    for (size_t i = 0; i < 8; ++i)
+    for (auto [i, group] : std::views::enumerate(groups))
     {
-        groups[i] = static_cast<uint16_t>((bytes_[i * 2] << 8) | bytes_[i * 2 + 1]);
+        group = static_cast<uint16_t>((bytes_[i * 2] << 8) | bytes_[i * 2 + 1]);
     }
 
     size_t best_start = 0;
     size_t best_len = 0;
     size_t current_start = 0;
     size_t current_len = 0;
-    for (size_t i = 0; i < groups.size(); ++i)
+    for (const auto [i, group] : std::views::enumerate(groups))
     {
-        if (groups[i] == 0)
+        if (group == 0)
         {
             if (current_len == 0)
             {
@@ -335,12 +327,14 @@ std::string IPv6Address::to_string() const
     }
 
     std::ostringstream oss;
-    for (size_t i = 0; i < groups.size(); ++i)
+    for (const auto [i, group] : std::views::enumerate(groups))
     {
-        if (best_len > 0 && i == best_start)
+        if (best_len > 0 && i >= best_start && i < best_start + best_len)
         {
-            oss << "::";
-            i += best_len - 1;
+            if (i == best_start)
+            {
+                oss << "::";
+            }
             continue;
         }
 
@@ -348,7 +342,7 @@ std::string IPv6Address::to_string() const
         {
             oss << ':';
         }
-        oss << std::hex << std::nouppercase << groups[i];
+        oss << std::hex << std::nouppercase << group;
     }
 
     std::string result = oss.str();
@@ -508,10 +502,9 @@ std::shared_ptr<IPAddress> IPAnalyzer::get_network() const
             network_bytes[fullBytes] &= static_cast<uint8_t>(0xFF << (8 - remainingBits));
         }
 
-        for (int i = fullBytes + (remainingBits > 0 ? 1 : 0); i < 16; ++i)
-        {
-            network_bytes[i] = 0;
-        }
+        const auto host_offset =
+            static_cast<size_t>(fullBytes + (remainingBits > 0 ? 1 : 0));
+        std::ranges::fill(network_bytes | std::views::drop(host_offset), 0);
 
         return std::make_shared<IPv6Address>(network_bytes);
     }
@@ -564,10 +557,9 @@ std::shared_ptr<IPAddress> IPAnalyzer::get_broadcast() const
             ip_bytes[fullBytes] &= static_cast<uint8_t>(0xFF << (8 - remainingBits));
         }
 
-        for (int i = fullBytes + (remainingBits > 0 ? 1 : 0); i < 16; ++i)
-        {
-            ip_bytes[i] = 0xFF;
-        }
+        const auto host_offset =
+            static_cast<size_t>(fullBytes + (remainingBits > 0 ? 1 : 0));
+        std::ranges::fill(ip_bytes | std::views::drop(host_offset), 0xFF);
 
         if (remainingBits > 0)
         {
@@ -609,23 +601,26 @@ std::pair<std::shared_ptr<IPAddress>, std::shared_ptr<IPAddress>> IPAnalyzer::ge
         {
             last_bytes[fullBytes] |= static_cast<uint8_t>(0xFF >> remainingBits);
         }
-        for (int i = fullBytes + (remainingBits > 0 ? 1 : 0); i < 16; ++i)
-        {
-            last_bytes[i] = 0xFF;
-        }
+        const auto host_offset =
+            static_cast<size_t>(fullBytes + (remainingBits > 0 ? 1 : 0));
+        std::ranges::fill(last_bytes | std::views::drop(host_offset), 0xFF);
 
         if (cidr_ < 127)
         {
-            for (int i = 15; i >= 0; --i)
+            for (uint8_t& byte : network_bytes | std::views::reverse)
             {
-                if (++network_bytes[i] != 0)
+                if (++byte != 0)
+                {
                     break;
+                }
             }
 
-            for (int i = 15; i >= 0; --i)
+            for (uint8_t& byte : last_bytes | std::views::reverse)
             {
-                if (--last_bytes[i] != 0xFF)
+                if (--byte != 0xFF)
+                {
                     break;
+                }
             }
         }
 
@@ -723,9 +718,9 @@ IPv4Address::IPv4Address(std::string_view address)
 
 IPv4Address::IPv4Address(unsigned int address)
 {
-    for (int i = 3; i >= 0; --i)
+    for (uint8_t& octet : octets_ | std::views::reverse)
     {
-        octets_[i] = static_cast<uint8_t>(address & 0xFF);
+        octet = static_cast<uint8_t>(address & 0xFF);
         address >>= 8;
     }
 }
@@ -751,9 +746,9 @@ std::string IPv4Address::to_string() const
 std::string IPv4Address::to_binary_string() const
 {
     std::ostringstream oss;
-    for (int i = 0; i < 4; ++i)
+    for (const uint8_t octet : octets_)
     {
-        oss << std::bitset<8>(octets_[i]).to_string();
+        oss << std::bitset<8>(octet).to_string();
     }
     return oss.str();
 }

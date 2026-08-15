@@ -5,6 +5,7 @@
 // Copyright (c) 2024 Volker Schwaberow
 
 #include "cli_app.hh"
+#include <ranges>
 
 namespace ip_analyzer {
 
@@ -16,7 +17,7 @@ void PrintCopperBar(bool color_enabled)
         return;
     }
 
-    for (int i = 0; i < kWidth; ++i)
+    for (int i : std::views::iota(0, kWidth))
     {
         constexpr int kMaxColor = 255;
         const int r = std::min(kMaxColor, i * kMaxColor / kWidth);
@@ -235,11 +236,11 @@ int IPAnalyzerApp::RunFromStdin()
         std::println("[");
     }
 
-    for (size_t index = 0; index < inputs.size(); ++index)
+    for (const auto [index, line] : std::views::enumerate(inputs))
     {
         try
         {
-            IPAnalyzer analyzer(inputs[index]);
+            IPAnalyzer analyzer(line);
             if (output_json_)
             {
                 PrintJsonObject(analyzer, "  ", index + 1 < inputs.size());
