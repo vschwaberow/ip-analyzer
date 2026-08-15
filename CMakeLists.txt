@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(ip-analyzer VERSION 0.1.6 LANGUAGES CXX)
+project(ip-analyzer VERSION 0.1.7 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -12,8 +12,10 @@ add_executable(ip-analyzer
 )
 target_include_directories(ip-analyzer PRIVATE src)
 
-if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    target_compile_options(ip-analyzer PRIVATE -O3 -march=native -mtune=native)
+if(MSVC)
+    target_compile_options(ip-analyzer PRIVATE $<$<CONFIG:Release>:/O2>)
+else()
+    target_compile_options(ip-analyzer PRIVATE $<$<CONFIG:Release>:-O3>)
 endif()
 
 enable_testing()

@@ -168,9 +168,21 @@ TEST_CASE("IPAnalyzer IPv6 functionality", "[ipanalyzer][ipv6]") {
     REQUIRE(first->to_string() == "2001:db8::1");
     REQUIRE(last->to_string() == "2001:db8::ffff:ffff:ffff:fffe");
 
-    REQUIRE(analyzer.get_num_hosts() == std::numeric_limits<uint64_t>::max());
+    REQUIRE(analyzer.get_num_hosts() == std::numeric_limits<uint64_t>::max() - 1);
     REQUIRE(analyzer.is_private() == false);
     REQUIRE(analyzer.get_cidr() == 64);
+}
+
+TEST_CASE("IPAnalyzer IPv6 host count matches usable range", "[ipanalyzer][ipv6]") {
+    REQUIRE(IPAnalyzer("2001:db8::/120").get_num_hosts() == 254);
+    REQUIRE(IPAnalyzer("2001:db8::/96").get_num_hosts() == 4294967294ULL);
+    REQUIRE(IPAnalyzer("2001:db8::/126").get_num_hosts() == 2);
+    REQUIRE(IPAnalyzer("2001:db8::/127").get_num_hosts() == 2);
+    REQUIRE(IPAnalyzer("2001:db8::1/128").get_num_hosts() == 1);
+    REQUIRE(IPAnalyzer("2001:db8::/64").get_num_hosts() ==
+            std::numeric_limits<uint64_t>::max() - 1);
+    REQUIRE(IPAnalyzer("2001:db8::/63").get_num_hosts() ==
+            std::numeric_limits<uint64_t>::max());
 }
 
 TEST_CASE("IPAnalyzer IPv6 non-byte-aligned broadcast", "[ipanalyzer][ipv6]") {
@@ -224,6 +236,16 @@ TEST_CASE("Invalid IPv6 addresses and CIDR values", "[ipv6address]") {
         REQUIRE_THROWS_AS(IPAnalyzer("2001:0db8:0000:0000:0000:0000:0000:0001/1000"), std::invalid_argument);
         REQUIRE_THROWS_AS(IPAnalyzer("2001:0db8:0000:0000:0000:0000:0000:0001/-1"), std::invalid_argument);
     }
+}
+
+TEST_CASE("IPv4-mapped private address classification", "[ipv6address]") {
+    REQUIRE(IPv6Address("::ffff:192.168.1.1").is_private() == true);
+    REQUIRE(IPv6Address("::ffff:10.0.0.1").is_private() == true);
+    REQUIRE(IPv6Address("::ffff:172.16.5.1").is_private() == true);
+    REQUIRE(IPv6Address("::ffff:8.8.8.8").is_private() == false);
+    REQUIRE(IPv6Address("::ffff:192.0.2.128").is_ipv4_mapped() == true);
+    REQUIRE(IPv6Address("2001:db8::1").is_ipv4_mapped() == false);
+    REQUIRE(IPAnalyzer("::ffff:192.168.1.1").is_private() == true);
 }
 
 TEST_CASE("IPv6 private address detection", "[ipv6address]") {

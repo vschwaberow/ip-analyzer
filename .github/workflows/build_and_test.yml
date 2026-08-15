@@ -52,9 +52,8 @@ jobs:
           cmake --build build --config Release
 
       - name: Run Tests
-        if: runner.os != 'Windows'
         run: |
-          ctest --test-dir build --output-on-failure
+          ctest --test-dir build --output-on-failure -C Release
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4

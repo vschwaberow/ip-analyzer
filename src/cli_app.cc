@@ -5,6 +5,7 @@
 // Copyright (c) 2024 Volker Schwaberow
 
 #include "cli_app.hh"
+#include <ranges>
 
 namespace ip_analyzer {
 
@@ -16,7 +17,7 @@ void PrintCopperBar(bool color_enabled)
         return;
     }
 
-    for (int i = 0; i < kWidth; ++i)
+    for (int i : std::views::iota(0, kWidth))
     {
         constexpr int kMaxColor = 255;
         const int r = std::min(kMaxColor, i * kMaxColor / kWidth);
@@ -235,11 +236,11 @@ int IPAnalyzerApp::RunFromStdin()
         std::println("[");
     }
 
-    for (size_t index = 0; index < inputs.size(); ++index)
+    for (const auto [index, line] : std::views::enumerate(inputs))
     {
         try
         {
-            IPAnalyzer analyzer(inputs[index]);
+            IPAnalyzer analyzer(line);
             if (output_json_)
             {
                 PrintJsonObject(analyzer, "  ", index + 1 < inputs.size());
@@ -292,6 +293,8 @@ std::string IPAnalyzerApp::GetIPv6Scope(const std::shared_ptr<IPAddress> &ip) co
         bytes[8] == 0 && bytes[9] == 0 && bytes[10] == 0 && bytes[11] == 0 &&
         bytes[12] == 0 && bytes[13] == 0 && bytes[14] == 0 && bytes[15] == 1)
         return "Loopback";
+    if (ipv6->is_ipv4_mapped())
+        return "IPv4-Mapped";
     if (bytes[0] == 0x20 && bytes[1] == 0x01 && bytes[2] == 0x0d && bytes[3] == 0xb8)
         return "Documentation";
     if (bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0x80)
