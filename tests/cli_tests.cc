@@ -292,6 +292,62 @@ TEST_CASE("JSON output contains schema and version", "[cli]") {
     REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring(std::string(kVersion)));
 }
 
+TEST_CASE("Stdin JSON stays valid when a line fails", "[cli]") {
+    using namespace ip_analyzer;
+
+    SECTION("Later invalid line closes a valid array") {
+        std::istringstream input("192.168.0.1/24\nnot-an-ip\n");
+        CinCapture cin_guard(input);
+
+        StdoutCapture capture;
+        constexpr std::array args = {
+            "ip-analyzer", "--stdin", "--json", "--no-color"};
+        int result = IPAnalyzerApp().Run(std::span(args));
+        std::string output = capture.get_output();
+
+        REQUIRE(result == 1);
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("\"schema\": \"ip-analyzer/1\""));
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("192.168.0.1"));
+        REQUIRE_THAT(output, !Catch::Matchers::ContainsSubstring("Error:"));
+        REQUIRE_THAT(output, !Catch::Matchers::ContainsSubstring("},"));
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("]"));
+    }
+
+    SECTION("First invalid line emits an empty JSON array") {
+        std::istringstream input("not-an-ip\n");
+        CinCapture cin_guard(input);
+
+        StdoutCapture capture;
+        constexpr std::array args = {
+            "ip-analyzer", "--stdin", "--json", "--no-color"};
+        int result = IPAnalyzerApp().Run(std::span(args));
+        std::string output = capture.get_output();
+
+        REQUIRE(result == 1);
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("["));
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("]"));
+        REQUIRE_THAT(output, !Catch::Matchers::ContainsSubstring("Error:"));
+        REQUIRE_THAT(output, !Catch::Matchers::ContainsSubstring("\"ip\""));
+    }
+
+    SECTION("Two valid lines still separate objects with a comma") {
+        std::istringstream input("192.168.0.1/24\n10.0.0.1/8\n");
+        CinCapture cin_guard(input);
+
+        StdoutCapture capture;
+        constexpr std::array args = {
+            "ip-analyzer", "--stdin", "--json", "--no-color"};
+        int result = IPAnalyzerApp().Run(std::span(args));
+        std::string output = capture.get_output();
+
+        REQUIRE(result == 0);
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("192.168.0.1"));
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("10.0.0.1"));
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("\"cidr\": 24"));
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("\"cidr\": 8"));
+    }
+}
+
 TEST_CASE("Stdin input supports multiple lines", "[cli]") {
     using namespace ip_analyzer;
 
