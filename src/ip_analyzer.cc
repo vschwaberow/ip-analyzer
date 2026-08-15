@@ -640,14 +640,17 @@ uint64_t IPAnalyzer::get_num_hosts() const
             return cidr_ == 127 ? 2 : 1;
         }
 
-        if (cidr_ <= 64)
+        if (cidr_ < 64)
         {
             return std::numeric_limits<uint64_t>::max();
         }
-        else
+
+        if (cidr_ == 64)
         {
-            return 1ULL << (128 - cidr_);
+            return std::numeric_limits<uint64_t>::max() - 1;
         }
+
+        return (1ULL << (128 - cidr_)) - 2;
     }
 }
 

@@ -168,9 +168,21 @@ TEST_CASE("IPAnalyzer IPv6 functionality", "[ipanalyzer][ipv6]") {
     REQUIRE(first->to_string() == "2001:db8::1");
     REQUIRE(last->to_string() == "2001:db8::ffff:ffff:ffff:fffe");
 
-    REQUIRE(analyzer.get_num_hosts() == std::numeric_limits<uint64_t>::max());
+    REQUIRE(analyzer.get_num_hosts() == std::numeric_limits<uint64_t>::max() - 1);
     REQUIRE(analyzer.is_private() == false);
     REQUIRE(analyzer.get_cidr() == 64);
+}
+
+TEST_CASE("IPAnalyzer IPv6 host count matches usable range", "[ipanalyzer][ipv6]") {
+    REQUIRE(IPAnalyzer("2001:db8::/120").get_num_hosts() == 254);
+    REQUIRE(IPAnalyzer("2001:db8::/96").get_num_hosts() == 4294967294ULL);
+    REQUIRE(IPAnalyzer("2001:db8::/126").get_num_hosts() == 2);
+    REQUIRE(IPAnalyzer("2001:db8::/127").get_num_hosts() == 2);
+    REQUIRE(IPAnalyzer("2001:db8::1/128").get_num_hosts() == 1);
+    REQUIRE(IPAnalyzer("2001:db8::/64").get_num_hosts() ==
+            std::numeric_limits<uint64_t>::max() - 1);
+    REQUIRE(IPAnalyzer("2001:db8::/63").get_num_hosts() ==
+            std::numeric_limits<uint64_t>::max());
 }
 
 TEST_CASE("IPAnalyzer IPv6 non-byte-aligned broadcast", "[ipanalyzer][ipv6]") {
