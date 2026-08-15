@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.1.8
+- Stop `--ip` from consuming the following CLI flag as an address value.
 - Keep `--stdin --json` output valid when a later line fails (no trailing comma; errors on stderr).
 
 ## 0.1.7
