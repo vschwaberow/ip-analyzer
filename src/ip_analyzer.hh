@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -65,6 +66,36 @@ private:
     static constexpr int hex_char_to_int(char c);
 };
 
+enum class PrefixRelation
+{
+    Equal,
+    Contains,
+    ContainedBy,
+    Overlaps,
+    Adjacent,
+    Disjoint
+};
+
+[[nodiscard]] constexpr std::string_view prefix_relation_name(PrefixRelation relation) noexcept
+{
+    switch (relation)
+    {
+    case PrefixRelation::Equal:
+        return "equal";
+    case PrefixRelation::Contains:
+        return "contains";
+    case PrefixRelation::ContainedBy:
+        return "contained";
+    case PrefixRelation::Overlaps:
+        return "overlaps";
+    case PrefixRelation::Adjacent:
+        return "adjacent";
+    case PrefixRelation::Disjoint:
+        return "disjoint";
+    }
+    return "disjoint";
+}
+
 class IPAnalyzer
 {
 public:
@@ -83,6 +114,14 @@ public:
 
     [[nodiscard]] bool contains(const IPAnalyzer& other) const;
     [[nodiscard]] bool overlaps(const IPAnalyzer& other) const;
+    [[nodiscard]] PrefixRelation relate(const IPAnalyzer& other) const;
+    [[nodiscard]] bool is_adjacent(const IPAnalyzer& other) const;
+    [[nodiscard]] std::string next_prefix() const;
+    [[nodiscard]] std::string prev_prefix() const;
+    [[nodiscard]] std::vector<std::string> exclude(const IPAnalyzer& other) const;
+    [[nodiscard]] std::vector<std::string> intersect(const IPAnalyzer& other) const;
+    [[nodiscard]] std::vector<std::string> split(uint8_t child_prefix) const;
+    [[nodiscard]] std::string nth_address(int64_t index) const;
     [[nodiscard]] std::vector<std::string> list_usable_hosts(
         uint64_t max_count = kDefaultMaxListedHosts) const;
 
@@ -93,6 +132,20 @@ public:
     [[nodiscard]] static std::vector<std::string>
     list_addresses_in_range(std::string_view first, std::string_view last,
                             uint64_t max_count = kDefaultMaxListedHosts);
+    [[nodiscard]] static std::vector<std::string>
+    aggregate(std::span<const std::string> inputs);
+    [[nodiscard]] static std::vector<std::string>
+    exclude_from_range(std::string_view first, std::string_view last,
+                       std::string_view hole);
+    [[nodiscard]] static std::vector<std::string>
+    intersect_with_range(std::string_view first, std::string_view last,
+                         std::string_view other);
+    [[nodiscard]] static std::string
+    nth_address_in_range(std::string_view first, std::string_view last,
+                         int64_t index);
+    [[nodiscard]] static PrefixRelation
+    relate_range(std::string_view first, std::string_view last,
+                 std::string_view other);
 
 private:
     std::shared_ptr<IPAddress> ip_;

@@ -981,58 +981,342 @@ std::vector<std::string> summarize_ipv6(UInt128 start, UInt128 end)
     return prefixes;
 }
 
+
+enum class AddressFamily
+{
+    IPv4,
+    IPv6
+};
+
+struct AddressSpan
+{
+    AddressFamily family{AddressFamily::IPv4};
+    UInt128 start{};
+    UInt128 end{};
+};
+
+UInt128 family_max(AddressFamily family)
+{
+    if (family == AddressFamily::IPv4)
+    {
+        return UInt128::from_u64(0xFFFFFFFFULL);
+    }
+    return {~0ULL, ~0ULL};
+}
+
+int family_width(AddressFamily family)
+{
+    return family == AddressFamily::IPv4 ? 32 : 128;
+}
+
+std::string format_span_address(AddressFamily family, const UInt128 &value)
+{
+    if (family == AddressFamily::IPv4)
+    {
+        return IPv4Address(static_cast<uint32_t>(value.lo)).to_string();
+    }
+    return IPv6Address(value.to_bytes()).to_string();
+}
+
+void ensure_same_family(const AddressSpan &lhs, const AddressSpan &rhs)
+{
+    if (lhs.family != rhs.family)
+    {
+        throw std::invalid_argument("Address family mismatch");
+    }
+}
+
+bool spans_overlap(const AddressSpan &lhs, const AddressSpan &rhs)
+{
+    return lhs.start <= rhs.end && rhs.start <= lhs.end;
+}
+
+bool spans_adjacent(const AddressSpan &lhs, const AddressSpan &rhs)
+{
+    if (spans_overlap(lhs, rhs))
+    {
+        return false;
+    }
+    const auto max = family_max(lhs.family);
+    if (lhs.end != max && lhs.end + UInt128::from_u64(1) == rhs.start)
+    {
+        return true;
+    }
+    if (rhs.end != max && rhs.end + UInt128::from_u64(1) == lhs.start)
+    {
+        return true;
+    }
+    return false;
+}
+
+PrefixRelation relate_spans(const AddressSpan &lhs, const AddressSpan &rhs)
+{
+    ensure_same_family(lhs, rhs);
+    if (lhs.start == rhs.start && lhs.end == rhs.end)
+    {
+        return PrefixRelation::Equal;
+    }
+    if (lhs.start <= rhs.start && lhs.end >= rhs.end)
+    {
+        return PrefixRelation::Contains;
+    }
+    if (rhs.start <= lhs.start && rhs.end >= lhs.end)
+    {
+        return PrefixRelation::ContainedBy;
+    }
+    if (spans_overlap(lhs, rhs))
+    {
+        return PrefixRelation::Overlaps;
+    }
+    if (spans_adjacent(lhs, rhs))
+    {
+        return PrefixRelation::Adjacent;
+    }
+    return PrefixRelation::Disjoint;
+}
+
+AddressSpan span_from_analyzer(const IPAnalyzer &analyzer);
+
+AddressSpan span_from_ipv4_prefix(uint32_t address, uint8_t cidr)
+{
+    const uint32_t network = cidr == 0 ? 0 : address & (0xFFFFFFFFU << (32 - cidr));
+    const uint32_t broadcast = cidr == 0 ? 0xFFFFFFFFU : address | ~(0xFFFFFFFFU << (32 - cidr));
+    return {AddressFamily::IPv4, UInt128::from_u64(network), UInt128::from_u64(broadcast)};
+}
+
+AddressSpan span_from_analyzer(const IPAnalyzer &analyzer)
+{
+    if (analyzer.get_ip()->is_ipv4())
+    {
+        const uint32_t network =
+            std::dynamic_pointer_cast<IPv4Address>(analyzer.get_network())->to_uint32();
+        const uint32_t broadcast =
+            std::dynamic_pointer_cast<IPv4Address>(analyzer.get_broadcast())->to_uint32();
+        return {AddressFamily::IPv4, UInt128::from_u64(network),
+                UInt128::from_u64(broadcast)};
+    }
+
+    const auto ipv6 = std::dynamic_pointer_cast<IPv6Address>(analyzer.get_ip());
+    if (ipv6->is_ipv4_mapped() && analyzer.get_cidr() >= 96)
+    {
+        const auto bytes = ipv6->to_bytes();
+        const uint32_t embedded =
+            (static_cast<uint32_t>(bytes[12]) << 24) |
+            (static_cast<uint32_t>(bytes[13]) << 16) |
+            (static_cast<uint32_t>(bytes[14]) << 8) |
+            static_cast<uint32_t>(bytes[15]);
+        return span_from_ipv4_prefix(embedded,
+                                     static_cast<uint8_t>(analyzer.get_cidr() - 96));
+    }
+
+    const auto network =
+        std::dynamic_pointer_cast<IPv6Address>(analyzer.get_network())->to_bytes();
+    const auto broadcast =
+        std::dynamic_pointer_cast<IPv6Address>(analyzer.get_broadcast())->to_bytes();
+    return {AddressFamily::IPv6, UInt128::from_bytes(network),
+            UInt128::from_bytes(broadcast)};
+}
+
+AddressSpan span_from_host(const IPAnalyzer &analyzer)
+{
+    if (analyzer.get_ip()->is_ipv4())
+    {
+        const uint32_t value =
+            std::dynamic_pointer_cast<IPv4Address>(analyzer.get_ip())->to_uint32();
+        return {AddressFamily::IPv4, UInt128::from_u64(value), UInt128::from_u64(value)};
+    }
+
+    const auto ipv6 = std::dynamic_pointer_cast<IPv6Address>(analyzer.get_ip());
+    if (ipv6->is_ipv4_mapped())
+    {
+        const auto bytes = ipv6->to_bytes();
+        const uint32_t embedded =
+            (static_cast<uint32_t>(bytes[12]) << 24) |
+            (static_cast<uint32_t>(bytes[13]) << 16) |
+            (static_cast<uint32_t>(bytes[14]) << 8) |
+            static_cast<uint32_t>(bytes[15]);
+        return {AddressFamily::IPv4, UInt128::from_u64(embedded),
+                UInt128::from_u64(embedded)};
+    }
+
+    const auto value = UInt128::from_bytes(ipv6->to_bytes());
+    return {AddressFamily::IPv6, value, value};
+}
+
+AddressSpan span_from_range(std::string_view first, std::string_view last)
+{
+    const IPAnalyzer start(first);
+    const IPAnalyzer stop(last);
+    const auto lhs = span_from_host(start);
+    const auto rhs = span_from_host(stop);
+    ensure_same_family(lhs, rhs);
+    if (lhs.start > rhs.start)
+    {
+        throw std::invalid_argument("Range start is after end");
+    }
+    return {lhs.family, lhs.start, rhs.end};
+}
+
+AddressSpan span_from_token(std::string_view token)
+{
+    if (const auto range = IPAnalyzer::parse_address_range(token))
+    {
+        return span_from_range(range->first, range->second);
+    }
+    return span_from_analyzer(IPAnalyzer(token));
+}
+
+std::vector<std::string> cidrs_from_span(const AddressSpan &span)
+{
+    return IPAnalyzer::cidrs_covering_range(format_span_address(span.family, span.start),
+                                            format_span_address(span.family, span.end));
+}
+
+std::vector<AddressSpan> subtract_span(const AddressSpan &subject, const AddressSpan &hole)
+{
+    ensure_same_family(subject, hole);
+    if (!spans_overlap(subject, hole))
+    {
+        return {subject};
+    }
+
+    std::vector<AddressSpan> remaining;
+    if (subject.start < hole.start)
+    {
+        remaining.push_back(
+            {subject.family, subject.start, hole.start - UInt128::from_u64(1)});
+    }
+    if (subject.end > hole.end)
+    {
+        remaining.push_back(
+            {subject.family, hole.end + UInt128::from_u64(1), subject.end});
+    }
+    return remaining;
+}
+
+std::optional<AddressSpan> intersect_span(const AddressSpan &lhs, const AddressSpan &rhs)
+{
+    ensure_same_family(lhs, rhs);
+    if (!spans_overlap(lhs, rhs))
+    {
+        return std::nullopt;
+    }
+    const UInt128 start = lhs.start > rhs.start ? lhs.start : rhs.start;
+    const UInt128 end = lhs.end < rhs.end ? lhs.end : rhs.end;
+    return AddressSpan{lhs.family, start, end};
+}
+
+std::vector<AddressSpan> merge_spans(std::vector<AddressSpan> spans)
+{
+    if (spans.empty())
+    {
+        return {};
+    }
+    for (size_t i = 1; i < spans.size(); ++i)
+    {
+        ensure_same_family(spans[0], spans[i]);
+    }
+    std::ranges::sort(spans, [](const AddressSpan &a, const AddressSpan &b) {
+        return a.start < b.start;
+    });
+
+    std::vector<AddressSpan> merged;
+    AddressSpan current = spans.front();
+    for (const auto &next : spans | std::views::drop(1))
+    {
+        if (spans_overlap(current, next) || spans_adjacent(current, next))
+        {
+            if (next.end > current.end)
+            {
+                current.end = next.end;
+            }
+        }
+        else
+        {
+            merged.push_back(current);
+            current = next;
+        }
+    }
+    merged.push_back(current);
+    return merged;
+}
+
+std::vector<std::string> cidrs_from_spans(const std::vector<AddressSpan> &spans)
+{
+    std::vector<std::string> prefixes;
+    for (const auto &span : spans)
+    {
+        auto part = cidrs_from_span(span);
+        prefixes.insert(prefixes.end(), part.begin(), part.end());
+    }
+    return prefixes;
+}
+
+std::string add_offset_to_address(const IPAddress &address, uint64_t offset)
+{
+    if (address.is_ipv4())
+    {
+        const uint32_t value =
+            dynamic_cast<const IPv4Address &>(address).to_uint32();
+        if (offset > static_cast<uint64_t>(0xFFFFFFFFU - value))
+        {
+            throw std::invalid_argument("Host index is out of range");
+        }
+        return IPv4Address(value + static_cast<uint32_t>(offset)).to_string();
+    }
+    const auto bytes = dynamic_cast<const IPv6Address &>(address).to_bytes();
+    const auto next = UInt128::from_bytes(bytes) + UInt128::from_u64(offset);
+    if (next < UInt128::from_bytes(bytes) && offset != 0)
+    {
+        throw std::invalid_argument("Host index is out of range");
+    }
+    return IPv6Address(next.to_bytes()).to_string();
+}
+
+uint64_t resolve_index(int64_t index, uint64_t count)
+{
+    if (count == 0)
+    {
+        throw std::invalid_argument("Host index is out of range");
+    }
+    uint64_t ordinal = 0;
+    if (index >= 0)
+    {
+        ordinal = static_cast<uint64_t>(index);
+    }
+    else if (index == -1)
+    {
+        ordinal = count - 1;
+    }
+    else
+    {
+        const uint64_t from_end = static_cast<uint64_t>(-index);
+        if (from_end > count)
+        {
+            throw std::invalid_argument("Host index is out of range");
+        }
+        ordinal = count - from_end;
+    }
+    if (ordinal >= count)
+    {
+        throw std::invalid_argument("Host index is out of range");
+    }
+    return ordinal;
+}
+
 } // namespace
 
 bool IPAnalyzer::contains(const IPAnalyzer &other) const
 {
-    if (ip_->is_ipv4() != other.ip_->is_ipv4())
-    {
-        throw std::invalid_argument("Address family mismatch");
-    }
-    if (cidr_ > other.cidr_)
-    {
-        return false;
-    }
-
-    if (ip_->is_ipv4())
-    {
-        const auto ours =
-            std::dynamic_pointer_cast<IPv4Address>(get_network())->to_uint32();
-        const auto theirs =
-            std::dynamic_pointer_cast<IPv4Address>(other.get_network())->to_uint32();
-        return calculate_ipv4_network(theirs, cidr_) == ours;
-    }
-
-    const auto ours =
-        std::dynamic_pointer_cast<IPv6Address>(get_network())->to_bytes();
-    const auto theirs =
-        std::dynamic_pointer_cast<IPv6Address>(other.get_network())->to_bytes();
-    return apply_ipv6_prefix(theirs, cidr_) == ours;
+    const auto relation = relate_spans(span_from_analyzer(*this), span_from_analyzer(other));
+    return relation == PrefixRelation::Equal || relation == PrefixRelation::Contains;
 }
 
 bool IPAnalyzer::overlaps(const IPAnalyzer &other) const
 {
-    if (ip_->is_ipv4() != other.ip_->is_ipv4())
-    {
-        throw std::invalid_argument("Address family mismatch");
-    }
-
-    const uint8_t shorter = std::min(cidr_, other.cidr_);
-    if (ip_->is_ipv4())
-    {
-        const auto ours =
-            std::dynamic_pointer_cast<IPv4Address>(get_network())->to_uint32();
-        const auto theirs =
-            std::dynamic_pointer_cast<IPv4Address>(other.get_network())->to_uint32();
-        return calculate_ipv4_network(ours, shorter) ==
-               calculate_ipv4_network(theirs, shorter);
-    }
-
-    const auto ours =
-        std::dynamic_pointer_cast<IPv6Address>(get_network())->to_bytes();
-    const auto theirs =
-        std::dynamic_pointer_cast<IPv6Address>(other.get_network())->to_bytes();
-    return apply_ipv6_prefix(ours, shorter) == apply_ipv6_prefix(theirs, shorter);
+    const auto relation = relate_spans(span_from_analyzer(*this), span_from_analyzer(other));
+    return relation == PrefixRelation::Equal || relation == PrefixRelation::Contains ||
+           relation == PrefixRelation::ContainedBy || relation == PrefixRelation::Overlaps;
 }
 
 std::vector<std::string> IPAnalyzer::list_usable_hosts(uint64_t max_count) const
@@ -1225,4 +1509,192 @@ std::vector<std::string> IPAnalyzer::list_addresses_in_range(std::string_view fi
         increment_ipv6(current);
     }
     return hosts;
+}
+
+PrefixRelation IPAnalyzer::relate(const IPAnalyzer &other) const
+{
+    return relate_spans(span_from_analyzer(*this), span_from_analyzer(other));
+}
+
+bool IPAnalyzer::is_adjacent(const IPAnalyzer &other) const
+{
+    return relate(other) == PrefixRelation::Adjacent;
+}
+
+std::string IPAnalyzer::next_prefix() const
+{
+    const bool ipv4 = ip_->is_ipv4();
+    const int width = ipv4 ? 32 : 128;
+    if (cidr_ == 0)
+    {
+        throw std::invalid_argument("No next prefix in the address space");
+    }
+    const int host_bits = width - cidr_;
+    const UInt128 block = UInt128::from_u64(1) << host_bits;
+    UInt128 network;
+    if (ipv4)
+    {
+        network = UInt128::from_u64(
+            std::dynamic_pointer_cast<IPv4Address>(get_network())->to_uint32());
+    }
+    else
+    {
+        network = UInt128::from_bytes(
+            std::dynamic_pointer_cast<IPv6Address>(get_network())->to_bytes());
+    }
+    const UInt128 next = network + block;
+    if (next < network || (ipv4 && next > UInt128::from_u64(0xFFFFFFFFULL)))
+    {
+        throw std::invalid_argument("No next prefix in the address space");
+    }
+    return format_span_address(ipv4 ? AddressFamily::IPv4 : AddressFamily::IPv6, next) +
+           "/" + std::to_string(cidr_);
+}
+
+std::string IPAnalyzer::prev_prefix() const
+{
+    const bool ipv4 = ip_->is_ipv4();
+    const int width = ipv4 ? 32 : 128;
+    if (cidr_ == 0)
+    {
+        throw std::invalid_argument("No previous prefix in the address space");
+    }
+    const int host_bits = width - cidr_;
+    const UInt128 block = UInt128::from_u64(1) << host_bits;
+    UInt128 network;
+    if (ipv4)
+    {
+        network = UInt128::from_u64(
+            std::dynamic_pointer_cast<IPv4Address>(get_network())->to_uint32());
+    }
+    else
+    {
+        network = UInt128::from_bytes(
+            std::dynamic_pointer_cast<IPv6Address>(get_network())->to_bytes());
+    }
+    if (network < block)
+    {
+        throw std::invalid_argument("No previous prefix in the address space");
+    }
+    return format_span_address(ipv4 ? AddressFamily::IPv4 : AddressFamily::IPv6,
+                               network - block) +
+           "/" + std::to_string(cidr_);
+}
+
+std::vector<std::string> IPAnalyzer::exclude(const IPAnalyzer &other) const
+{
+    return cidrs_from_spans(
+        subtract_span(span_from_analyzer(*this), span_from_analyzer(other)));
+}
+
+std::vector<std::string> IPAnalyzer::intersect(const IPAnalyzer &other) const
+{
+    const auto common = intersect_span(span_from_analyzer(*this), span_from_analyzer(other));
+    if (!common)
+    {
+        return {};
+    }
+    return cidrs_from_span(*common);
+}
+
+std::vector<std::string> IPAnalyzer::split(uint8_t child_prefix) const
+{
+    const bool ipv4 = ip_->is_ipv4();
+    const int width = ipv4 ? 32 : 128;
+    if (child_prefix <= cidr_ || child_prefix > width)
+    {
+        throw std::invalid_argument("Invalid split prefix length");
+    }
+    const int count_bits = child_prefix - cidr_;
+    if (count_bits > 16)
+    {
+        throw std::invalid_argument("Split produces too many prefixes");
+    }
+    const uint32_t count = 1U << count_bits;
+    const int step_bits = width - child_prefix;
+    UInt128 network;
+    if (ipv4)
+    {
+        network = UInt128::from_u64(
+            std::dynamic_pointer_cast<IPv4Address>(get_network())->to_uint32());
+    }
+    else
+    {
+        network = UInt128::from_bytes(
+            std::dynamic_pointer_cast<IPv6Address>(get_network())->to_bytes());
+    }
+    const UInt128 step = UInt128::from_u64(1) << step_bits;
+    std::vector<std::string> prefixes;
+    prefixes.reserve(count);
+    UInt128 current = network;
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        prefixes.push_back(
+            format_span_address(ipv4 ? AddressFamily::IPv4 : AddressFamily::IPv6,
+                                current) +
+            "/" + std::to_string(child_prefix));
+        current = current + step;
+    }
+    return prefixes;
+}
+
+std::string IPAnalyzer::nth_address(int64_t index) const
+{
+    const uint64_t count = get_num_hosts();
+    const uint64_t ordinal = resolve_index(index, count);
+    const auto [first, last] = get_host_range();
+    (void)last;
+    return add_offset_to_address(*first, ordinal);
+}
+
+std::vector<std::string> IPAnalyzer::aggregate(std::span<const std::string> inputs)
+{
+    std::vector<AddressSpan> spans;
+    spans.reserve(inputs.size());
+    for (const auto &input : inputs)
+    {
+        spans.push_back(span_from_token(input));
+    }
+    return cidrs_from_spans(merge_spans(std::move(spans)));
+}
+
+std::vector<std::string> IPAnalyzer::exclude_from_range(std::string_view first,
+                                                       std::string_view last,
+                                                       std::string_view hole)
+{
+    return cidrs_from_spans(
+        subtract_span(span_from_range(first, last), span_from_token(hole)));
+}
+
+std::vector<std::string> IPAnalyzer::intersect_with_range(std::string_view first,
+                                                         std::string_view last,
+                                                         std::string_view other)
+{
+    const auto common =
+        intersect_span(span_from_range(first, last), span_from_token(other));
+    if (!common)
+    {
+        return {};
+    }
+    return cidrs_from_span(*common);
+}
+
+std::string IPAnalyzer::nth_address_in_range(std::string_view first, std::string_view last,
+                                             int64_t index)
+{
+    const auto span = span_from_range(first, last);
+    UInt128 count_span = (span.end - span.start) + UInt128::from_u64(1);
+    if (count_span.hi != 0 || count_span.lo == 0)
+    {
+        throw std::invalid_argument("Host index is out of range");
+    }
+    const uint64_t ordinal = resolve_index(index, count_span.lo);
+    const auto value = span.start + UInt128::from_u64(ordinal);
+    return format_span_address(span.family, value);
+}
+
+PrefixRelation IPAnalyzer::relate_range(std::string_view first, std::string_view last,
+                                        std::string_view other)
+{
+    return relate_spans(span_from_range(first, last), span_from_token(other));
 }

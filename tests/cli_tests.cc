@@ -544,3 +544,85 @@ TEST_CASE("CLI range input validation", "[cli][range]") {
         REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("Invalid address range"));
     }
 }
+
+TEST_CASE("CLI relate adjacent split nth and set ops", "[cli][relations]") {
+    using namespace ip_analyzer;
+
+    SECTION("Relate compact") {
+        StdoutCapture capture;
+        constexpr std::array args = {
+            "ip-analyzer", "--compact", "--no-color",
+            "192.168.1.0/25", "--relate", "192.168.1.128/25"};
+        REQUIRE(IPAnalyzerApp().Run(std::span(args)) == 0);
+        REQUIRE_THAT(capture.get_output(), Catch::Matchers::ContainsSubstring("relate: adjacent"));
+    }
+
+    SECTION("Adjacent true") {
+        StdoutCapture capture;
+        constexpr std::array args = {
+            "ip-analyzer", "--compact", "--no-color",
+            "10.0.0.0/8", "--adjacent", "11.0.0.0/8"};
+        REQUIRE(IPAnalyzerApp().Run(std::span(args)) == 0);
+        REQUIRE_THAT(capture.get_output(), Catch::Matchers::ContainsSubstring("adjacent: true"));
+    }
+
+    SECTION("Next prefix") {
+        StdoutCapture capture;
+        constexpr std::array args = {
+            "ip-analyzer", "--no-color", "192.168.1.0/24", "--next-prefix"};
+        REQUIRE(IPAnalyzerApp().Run(std::span(args)) == 0);
+        REQUIRE_THAT(capture.get_output(), Catch::Matchers::ContainsSubstring("192.168.2.0/24"));
+    }
+
+    SECTION("Exclude") {
+        StdoutCapture capture;
+        constexpr std::array args = {
+            "ip-analyzer", "--no-color", "192.168.1.0/24", "--exclude", "192.168.1.128/25"};
+        REQUIRE(IPAnalyzerApp().Run(std::span(args)) == 0);
+        REQUIRE_THAT(capture.get_output(), Catch::Matchers::ContainsSubstring("192.168.1.0/25"));
+    }
+
+    SECTION("Intersect") {
+        StdoutCapture capture;
+        constexpr std::array args = {
+            "ip-analyzer", "--no-color", "10.0.0.0/8", "--intersect", "10.1.2.0/24"};
+        REQUIRE(IPAnalyzerApp().Run(std::span(args)) == 0);
+        REQUIRE_THAT(capture.get_output(), Catch::Matchers::ContainsSubstring("10.1.2.0/24"));
+    }
+
+    SECTION("Split count") {
+        StdoutCapture capture;
+        constexpr std::array args = {
+            "ip-analyzer", "--no-color", "192.168.1.0/24", "--split", "4"};
+        REQUIRE(IPAnalyzerApp().Run(std::span(args)) == 0);
+        const auto output = capture.get_output();
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("192.168.1.0/26"));
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("192.168.1.192/26"));
+    }
+
+    SECTION("Nth last usable host") {
+        StdoutCapture capture;
+        constexpr std::array args = {
+            "ip-analyzer", "--no-color", "192.168.1.0/24", "--nth", "-1"};
+        REQUIRE(IPAnalyzerApp().Run(std::span(args)) == 0);
+        REQUIRE_THAT(capture.get_output(), Catch::Matchers::ContainsSubstring("192.168.1.254"));
+    }
+
+    SECTION("Stdin aggregate") {
+        std::istringstream input("10.0.0.0/16\n10.1.0.0/16\n");
+        CinCapture cin_guard(input);
+        StdoutCapture capture;
+        constexpr std::array args = {
+            "ip-analyzer", "--stdin", "--no-color", "--aggregate"};
+        REQUIRE(IPAnalyzerApp().Run(std::span(args)) == 0);
+        REQUIRE_THAT(capture.get_output(), Catch::Matchers::ContainsSubstring("10.0.0.0/15"));
+    }
+
+    SECTION("Split three is rejected") {
+        StdoutCapture capture;
+        constexpr std::array args = {
+            "ip-analyzer", "--no-color", "192.168.1.0/24", "--split", "3"};
+        REQUIRE(IPAnalyzerApp().Run(std::span(args)) == 1);
+        REQUIRE_THAT(capture.get_output(), Catch::Matchers::ContainsSubstring("power of two"));
+    }
+}

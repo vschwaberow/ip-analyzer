@@ -6,6 +6,8 @@
 
 #include "cli_app.hh"
 #include <ranges>
+#include <charconv>
+#include <bit>
 
 namespace ip_analyzer {
 
@@ -112,6 +114,15 @@ void IPAnalyzerApp::PrintHelp() const
     std::println("  --ip <value>       Provide the IP/CIDR without prompting");
     std::println("  --contains <ip>    Test whether <ip> or CIDR is inside the subject");
     std::println("  --overlaps <cidr>  Test whether <cidr> overlaps the subject");
+    std::println("  --relate <cidr>    Classify equal/contains/contained/overlaps/adjacent/disjoint");
+    std::println("  --adjacent <cidr>  Test whether two prefixes touch without overlapping");
+    std::println("  --next-prefix      Print the next aligned prefix of the same length");
+    std::println("  --prev-prefix      Print the previous aligned prefix of the same length");
+    std::println("  --exclude <cidr>   Subtract one or more CIDRs from the subject or range");
+    std::println("  --intersect <cidr> Print the intersection as minimal CIDRs");
+    std::println("  --aggregate        Merge stdin CIDRs/ranges into a minimal covering set");
+    std::println("  --split <n|/p>     Split into N equal children or into /p prefixes");
+    std::println("  --nth <k>          Print the 0-based usable host; -1 is the last");
     std::println("  --range <start-end> Convert an inclusive address range to CIDRs");
     std::println("  --list-ips         Print usable hosts, or every address in a range\n");
     std::println("Examples:");
@@ -123,6 +134,10 @@ void IPAnalyzerApp::PrintHelp() const
     std::println("  {} 192.168.1.0/24 --overlaps 192.168.1.128/25", kAppName);
     std::println("  {} 192.168.1.10-192.168.1.50", kAppName);
     std::println("  {} 192.168.1.0/30 --list-ips", kAppName);
+    std::println("  {} 192.168.1.0/24 --relate 192.168.1.128/25", kAppName);
+    std::println("  {} 10.0.0.0/8 --exclude 10.1.0.0/16", kAppName);
+    std::println("  {} 192.168.1.0/24 --split 4", kAppName);
+    std::println("  {} 192.168.1.0/24 --nth -1", kAppName);
 }
 
 void IPAnalyzerApp::PrintResults(const IPAnalyzer &analyzer) const
@@ -239,6 +254,19 @@ int IPAnalyzerApp::RunFromStdin()
         return 1;
     }
 
+    if (aggregate_)
+    {
+        try
+        {
+            return RunAggregate(inputs);
+        }
+        catch (const std::exception &e)
+        {
+            PrintError(e.what());
+            return 1;
+        }
+    }
+
     bool emitted_json_object = false;
     if (output_json_)
     {
@@ -267,9 +295,7 @@ int IPAnalyzerApp::RunFromStdin()
                 {
                     std::print("\n");
                 }
-                const int rc = list_ips_
-                                   ? RunListIpsRange(range->first, range->second)
-                                   : RunRangeToCidr(range->first, range->second);
+                const int rc = RunRangeOperation(range->first, range->second);
                 if (rc != 0)
                 {
                     return rc;
@@ -279,7 +305,9 @@ int IPAnalyzerApp::RunFromStdin()
             }
 
             IPAnalyzer analyzer(inputs[index]);
-            if (has_contains_ || has_overlaps_)
+            if (has_contains_ || has_overlaps_ || has_relate_ || has_adjacent_ ||
+                next_prefix_ || prev_prefix_ || has_intersect_ || has_split_ ||
+                has_nth_ || !exclude_targets_.empty())
             {
                 if (output_json_)
                 {
@@ -292,9 +320,43 @@ int IPAnalyzerApp::RunFromStdin()
                 {
                     std::print("\n");
                 }
-                const int rc = has_contains_
-                                   ? RunContains(analyzer, contains_target_)
-                                   : RunOverlaps(analyzer, overlaps_target_);
+                int rc = 0;
+                if (has_contains_)
+                {
+                    rc = RunContains(analyzer, contains_target_);
+                }
+                else if (has_overlaps_)
+                {
+                    rc = RunOverlaps(analyzer, overlaps_target_);
+                }
+                else if (has_relate_)
+                {
+                    rc = RunRelate(analyzer, relate_target_);
+                }
+                else if (has_adjacent_)
+                {
+                    rc = RunAdjacent(analyzer, adjacent_target_);
+                }
+                else if (next_prefix_ || prev_prefix_)
+                {
+                    rc = RunPrefixStep(analyzer, next_prefix_);
+                }
+                else if (!exclude_targets_.empty())
+                {
+                    rc = RunExclude(analyzer);
+                }
+                else if (has_intersect_)
+                {
+                    rc = RunIntersect(analyzer, intersect_target_);
+                }
+                else if (has_split_)
+                {
+                    rc = RunSplit(analyzer);
+                }
+                else
+                {
+                    rc = RunNth(analyzer);
+                }
                 if (rc != 0)
                 {
                     return rc;
@@ -553,6 +615,260 @@ int IPAnalyzerApp::RunRangeToCidr(std::string_view first, std::string_view last)
     {
         std::println("{}", prefix);
     }
+    return 0;
+}
+
+
+
+bool IPAnalyzerApp::ParseNth(std::string_view value)
+{
+    int64_t parsed = 0;
+    const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), parsed);
+    if (ec != std::errc{} || ptr != value.data() + value.size())
+    {
+        return false;
+    }
+    nth_index_ = parsed;
+    return true;
+}
+
+uint8_t IPAnalyzerApp::ResolveSplitPrefix(uint8_t parent_cidr, bool ipv4) const
+{
+    std::string_view value = split_arg_;
+    const int width = ipv4 ? 32 : 128;
+    if (value.starts_with('/'))
+    {
+        value.remove_prefix(1);
+        uint32_t prefix = 0;
+        const auto [ptr, ec] =
+            std::from_chars(value.data(), value.data() + value.size(), prefix);
+        if (ec != std::errc{} || ptr != value.data() + value.size() || prefix > 128)
+        {
+            throw std::invalid_argument("Invalid split prefix length");
+        }
+        return static_cast<uint8_t>(prefix);
+    }
+
+    uint32_t count = 0;
+    const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), count);
+    if (ec != std::errc{} || ptr != value.data() + value.size() || count < 2 ||
+        !std::has_single_bit(count))
+    {
+        throw std::invalid_argument("Split count must be a power of two");
+    }
+    const int extra = static_cast<int>(std::bit_width(count)) - 1;
+    const int child = static_cast<int>(parent_cidr) + extra;
+    if (child > width)
+    {
+        throw std::invalid_argument("Invalid split prefix length");
+    }
+    return static_cast<uint8_t>(child);
+}
+
+void IPAnalyzerApp::PrintPrefixList(std::string_view operation,
+                                    const std::vector<std::string> &prefixes) const
+{
+    if (output_json_)
+    {
+        std::println("{{");
+        std::println("  \"schema\": \"ip-analyzer/1\",");
+        std::println("  \"version\": \"{}\",", kVersion);
+        std::println("  \"operation\": \"{}\",", operation);
+        std::print("  \"cidrs\": [");
+        for (size_t i : std::views::iota(size_t{0}, prefixes.size()))
+        {
+            if (i > 0)
+            {
+                std::print(", ");
+            }
+            std::print("\"{}\"", prefixes[i]);
+        }
+        std::println("]");
+        std::println("}}");
+        return;
+    }
+
+    for (const auto &prefix : prefixes)
+    {
+        std::println("{}", prefix);
+    }
+}
+
+void IPAnalyzerApp::PrintNamedRelation(std::string_view subject, std::string_view other,
+                                       PrefixRelation relation) const
+{
+    const auto name = prefix_relation_name(relation);
+    if (output_json_)
+    {
+        std::println("{{");
+        std::println("  \"schema\": \"ip-analyzer/1\",");
+        std::println("  \"version\": \"{}\",", kVersion);
+        std::println("  \"operation\": \"relate\",");
+        std::println("  \"subject\": \"{}\",", subject);
+        std::println("  \"other\": \"{}\",", other);
+        std::println("  \"result\": \"{}\"", name);
+        std::println("}}");
+        return;
+    }
+    if (compact_)
+    {
+        std::println("relate: {}", name);
+        return;
+    }
+    PrintHeader("IP Relation", color_enabled_);
+    PrintRow("Subject", std::string(subject), "", color_enabled_);
+    PrintRow("Other", std::string(other), "", color_enabled_);
+    PrintRow("Relation", std::string(name), "", color_enabled_);
+    PrintCopperBar(color_enabled_);
+}
+
+int IPAnalyzerApp::RunRelate(const IPAnalyzer &subject, std::string_view other)
+{
+    const IPAnalyzer candidate(other);
+    const std::string subject_text =
+        subject.get_network()->to_string() + "/" + std::to_string(subject.get_cidr());
+    PrintNamedRelation(subject_text, other, subject.relate(candidate));
+    return 0;
+}
+
+int IPAnalyzerApp::RunAdjacent(const IPAnalyzer &subject, std::string_view other)
+{
+    const IPAnalyzer candidate(other);
+    const std::string subject_text =
+        subject.get_network()->to_string() + "/" + std::to_string(subject.get_cidr());
+    PrintRelation("adjacent", subject_text, other, "other", subject.is_adjacent(candidate));
+    return 0;
+}
+
+int IPAnalyzerApp::RunPrefixStep(const IPAnalyzer &subject, bool next)
+{
+    const std::string prefix = next ? subject.next_prefix() : subject.prev_prefix();
+    if (output_json_)
+    {
+        std::println("{{");
+        std::println("  \"schema\": \"ip-analyzer/1\",");
+        std::println("  \"version\": \"{}\",", kVersion);
+        std::println("  \"operation\": \"{}\",", next ? "next_prefix" : "prev_prefix");
+        std::println("  \"prefix\": \"{}\"", prefix);
+        std::println("}}");
+        return 0;
+    }
+    std::println("{}", prefix);
+    return 0;
+}
+
+int IPAnalyzerApp::RunExclude(const IPAnalyzer &subject)
+{
+    std::vector<std::string> prefixes{
+        subject.get_network()->to_string() + "/" + std::to_string(subject.get_cidr())};
+    for (const auto &hole : exclude_targets_)
+    {
+        std::vector<std::string> next;
+        const IPAnalyzer punch(hole);
+        for (const auto &prefix : prefixes)
+        {
+            auto part = IPAnalyzer(prefix).exclude(punch);
+            next.insert(next.end(), part.begin(), part.end());
+        }
+        prefixes = std::move(next);
+    }
+    PrintPrefixList("exclude", prefixes);
+    return 0;
+}
+
+int IPAnalyzerApp::RunIntersect(const IPAnalyzer &subject, std::string_view other)
+{
+    PrintPrefixList("intersect", subject.intersect(IPAnalyzer(other)));
+    return 0;
+}
+
+int IPAnalyzerApp::RunSplit(const IPAnalyzer &subject)
+{
+    const uint8_t child = ResolveSplitPrefix(subject.get_cidr(), subject.get_ip()->is_ipv4());
+    PrintPrefixList("split", subject.split(child));
+    return 0;
+}
+
+int IPAnalyzerApp::RunNth(const IPAnalyzer &subject)
+{
+    const std::string address = subject.nth_address(nth_index_);
+    if (output_json_)
+    {
+        std::println("{{");
+        std::println("  \"schema\": \"ip-analyzer/1\",");
+        std::println("  \"version\": \"{}\",", kVersion);
+        std::println("  \"operation\": \"nth\",");
+        std::println("  \"index\": {},", nth_index_);
+        std::println("  \"ip\": \"{}\"", address);
+        std::println("}}");
+        return 0;
+    }
+    std::println("{}", address);
+    return 0;
+}
+
+int IPAnalyzerApp::RunRangeOperation(std::string_view first, std::string_view last)
+{
+    if (has_contains_ || has_overlaps_ || has_relate_ || has_adjacent_ || next_prefix_ ||
+        prev_prefix_ || has_split_ || aggregate_)
+    {
+        PrintError("Cannot combine an address range with that operation");
+        PrintHelp();
+        return 1;
+    }
+    if (list_ips_)
+    {
+        return RunListIpsRange(first, last);
+    }
+    if (has_nth_)
+    {
+        const std::string address = IPAnalyzer::nth_address_in_range(first, last, nth_index_);
+        if (output_json_)
+        {
+            std::println("{{");
+            std::println("  \"schema\": \"ip-analyzer/1\",");
+            std::println("  \"version\": \"{}\",", kVersion);
+            std::println("  \"operation\": \"nth\",");
+            std::println("  \"first\": \"{}\",", first);
+            std::println("  \"last\": \"{}\",", last);
+            std::println("  \"index\": {},", nth_index_);
+            std::println("  \"ip\": \"{}\"", address);
+            std::println("}}");
+            return 0;
+        }
+        std::println("{}", address);
+        return 0;
+    }
+    if (!exclude_targets_.empty())
+    {
+        std::vector<std::string> prefixes =
+            IPAnalyzer::exclude_from_range(first, last, exclude_targets_.front());
+        for (const auto &hole : exclude_targets_ | std::views::drop(1))
+        {
+            std::vector<std::string> next;
+            const IPAnalyzer punch(hole);
+            for (const auto &prefix : prefixes)
+            {
+                auto part = IPAnalyzer(prefix).exclude(punch);
+                next.insert(next.end(), part.begin(), part.end());
+            }
+            prefixes = std::move(next);
+        }
+        PrintPrefixList("exclude", prefixes);
+        return 0;
+    }
+    if (has_intersect_)
+    {
+        PrintPrefixList("intersect",
+                        IPAnalyzer::intersect_with_range(first, last, intersect_target_));
+        return 0;
+    }
+    return RunRangeToCidr(first, last);
+}
+
+int IPAnalyzerApp::RunAggregate(const std::vector<std::string> &inputs)
+{
+    PrintPrefixList("aggregate", IPAnalyzer::aggregate(inputs));
     return 0;
 }
 

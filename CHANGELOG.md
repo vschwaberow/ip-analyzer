@@ -4,6 +4,10 @@
 - Add `--contains` and `--overlaps` to test CIDR containment and intersection.
 - Convert inclusive address ranges (`192.168.1.10-192.168.1.50` or `--range`) to a minimal CIDR set.
 - Add `--list-ips` to emit usable host addresses or every address in a range, with a 2^20 safety limit.
+- Add `--relate`, `--adjacent`, `--next-prefix`, and `--prev-prefix`.
+- Add `--exclude`, `--intersect`, and `--aggregate` set operations.
+- Add `--split` and `--nth` for child prefixes and indexed hosts.
+- Treat IPv4-mapped IPv6 prefixes (`::ffff:x.x.x.x` with `/96` or longer) as IPv4 in relations.
 
 ## 0.1.8
 - Stop `--ip` from consuming the following CLI flag as an address value.

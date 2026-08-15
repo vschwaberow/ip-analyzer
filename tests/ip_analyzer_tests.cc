@@ -387,3 +387,72 @@ TEST_CASE("Inclusive range host listing", "[ipanalyzer][list]") {
     REQUIRE_THROWS_AS(IPAnalyzer::list_addresses_in_range("10.0.0.0", "10.255.255.255"),
                       std::invalid_argument);
 }
+
+TEST_CASE("Prefix relation taxonomy", "[ipanalyzer][relations]") {
+    REQUIRE(IPAnalyzer("192.168.1.0/24").relate(IPAnalyzer("192.168.1.0/24")) ==
+            PrefixRelation::Equal);
+    REQUIRE(IPAnalyzer("192.168.1.0/24").relate(IPAnalyzer("192.168.1.128/25")) ==
+            PrefixRelation::Contains);
+    REQUIRE(IPAnalyzer("192.168.1.128/25").relate(IPAnalyzer("192.168.1.0/24")) ==
+            PrefixRelation::ContainedBy);
+    REQUIRE(IPAnalyzer("192.168.1.0/25").relate(IPAnalyzer("192.168.1.128/25")) ==
+            PrefixRelation::Adjacent);
+    REQUIRE(IPAnalyzer("192.168.1.0/25").is_adjacent(IPAnalyzer("192.168.1.128/25")));
+    REQUIRE(IPAnalyzer("10.0.0.0/8").relate(IPAnalyzer("11.0.0.0/8")) ==
+            PrefixRelation::Adjacent);
+    REQUIRE(IPAnalyzer("10.0.0.0/8").relate(IPAnalyzer("8.8.8.8/32")) ==
+            PrefixRelation::Disjoint);
+    REQUIRE(IPAnalyzer("2001:db8::/32").relate(IPAnalyzer("2001:db8:1::/48")) ==
+            PrefixRelation::Contains);
+}
+
+TEST_CASE("IPv4-mapped addresses relate to IPv4 prefixes", "[ipanalyzer][relations]") {
+    REQUIRE(IPAnalyzer("192.168.1.0/24").contains(IPAnalyzer("::ffff:192.168.1.10")));
+    REQUIRE(IPAnalyzer("::ffff:192.168.1.10").contains(IPAnalyzer("192.168.1.10")));
+    REQUIRE(IPAnalyzer("192.168.1.0/24").overlaps(IPAnalyzer("::ffff:192.168.1.0/120")));
+    REQUIRE(IPAnalyzer("10.0.0.0/8").relate(IPAnalyzer("::ffff:11.0.0.0/104")) ==
+            PrefixRelation::Adjacent);
+}
+
+TEST_CASE("Next and previous aligned prefixes", "[ipanalyzer][relations]") {
+    REQUIRE(IPAnalyzer("192.168.1.0/24").next_prefix() == "192.168.2.0/24");
+    REQUIRE(IPAnalyzer("192.168.1.0/24").prev_prefix() == "192.168.0.0/24");
+    REQUIRE(IPAnalyzer("2001:db8::/32").next_prefix() == "2001:db9::/32");
+    REQUIRE_THROWS_AS(IPAnalyzer("255.255.255.0/24").next_prefix(), std::invalid_argument);
+    REQUIRE_THROWS_AS(IPAnalyzer("0.0.0.0/8").prev_prefix(), std::invalid_argument);
+    REQUIRE_THROWS_AS(IPAnalyzer("0.0.0.0/0").next_prefix(), std::invalid_argument);
+}
+
+TEST_CASE("Exclude and intersect produce minimal CIDRs", "[ipanalyzer][relations]") {
+    REQUIRE(IPAnalyzer("192.168.1.0/24").exclude(IPAnalyzer("192.168.1.128/25")) ==
+            std::vector<std::string>{"192.168.1.0/25"});
+    REQUIRE(IPAnalyzer("10.0.0.0/8").intersect(IPAnalyzer("10.1.2.0/24")) ==
+            std::vector<std::string>{"10.1.2.0/24"});
+    REQUIRE(IPAnalyzer("192.168.1.0/25").intersect(IPAnalyzer("192.168.1.128/25")).empty());
+    REQUIRE(IPAnalyzer::exclude_from_range("192.168.1.10", "192.168.1.20", "192.168.1.12/31") ==
+            std::vector<std::string>{"192.168.1.10/31", "192.168.1.14/31", "192.168.1.16/30",
+                                     "192.168.1.20/32"});
+}
+
+TEST_CASE("Aggregate merges overlapping and adjacent prefixes", "[ipanalyzer][relations]") {
+    const std::vector<std::string> inputs{"10.0.0.0/16", "10.1.0.0/16"};
+    REQUIRE(IPAnalyzer::aggregate(inputs) == std::vector<std::string>{"10.0.0.0/15"});
+    const std::vector<std::string> nested{"192.168.0.0/16", "192.168.1.0/24"};
+    REQUIRE(IPAnalyzer::aggregate(nested) == std::vector<std::string>{"192.168.0.0/16"});
+}
+
+TEST_CASE("Split and nth host selection", "[ipanalyzer][relations]") {
+    REQUIRE(IPAnalyzer("192.168.1.0/24").split(26) ==
+            std::vector<std::string>{
+                "192.168.1.0/26",
+                "192.168.1.64/26",
+                "192.168.1.128/26",
+                "192.168.1.192/26",
+            });
+    REQUIRE_THROWS_AS(IPAnalyzer("192.168.1.0/24").split(24), std::invalid_argument);
+    REQUIRE(IPAnalyzer("192.168.1.0/24").nth_address(0) == "192.168.1.1");
+    REQUIRE(IPAnalyzer("192.168.1.0/24").nth_address(-1) == "192.168.1.254");
+    REQUIRE_THROWS_AS(IPAnalyzer("192.168.1.0/24").nth_address(254), std::invalid_argument);
+    REQUIRE(IPAnalyzer::nth_address_in_range("2001:db8::1", "2001:db8::5", 0) == "2001:db8::1");
+    REQUIRE(IPAnalyzer::nth_address_in_range("2001:db8::1", "2001:db8::5", -1) == "2001:db8::5");
+}
