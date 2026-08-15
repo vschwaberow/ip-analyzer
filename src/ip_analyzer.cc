@@ -247,11 +247,11 @@ std::string IPv6Address::expand_ipv6_address(std::string_view address) {
 
     std::string result;
     result.reserve(39);
-    for (const auto [i, segment] : std::views::enumerate(segments)) {
+    for (size_t i : std::views::iota(size_t{0}, segments.size())) {
         if (i > 0) {
             result.push_back(':');
         }
-        result.append(pad_segment(segment));
+        result.append(pad_segment(segments[i]));
     }
 
     return result;
@@ -287,18 +287,18 @@ std::string IPv6Address::to_string() const
     }
 
     std::array<uint16_t, 8> groups{};
-    for (auto [i, group] : std::views::enumerate(groups))
+    for (size_t i : std::views::iota(size_t{0}, groups.size()))
     {
-        group = static_cast<uint16_t>((bytes_[i * 2] << 8) | bytes_[i * 2 + 1]);
+        groups[i] = static_cast<uint16_t>((bytes_[i * 2] << 8) | bytes_[i * 2 + 1]);
     }
 
     size_t best_start = 0;
     size_t best_len = 0;
     size_t current_start = 0;
     size_t current_len = 0;
-    for (const auto [i, group] : std::views::enumerate(groups))
+    for (size_t i : std::views::iota(size_t{0}, groups.size()))
     {
-        if (group == 0)
+        if (groups[i] == 0)
         {
             if (current_len == 0)
             {
@@ -327,7 +327,7 @@ std::string IPv6Address::to_string() const
     }
 
     std::ostringstream oss;
-    for (const auto [i, group] : std::views::enumerate(groups))
+    for (size_t i : std::views::iota(size_t{0}, groups.size()))
     {
         if (best_len > 0 && i >= best_start && i < best_start + best_len)
         {
@@ -342,7 +342,7 @@ std::string IPv6Address::to_string() const
         {
             oss << ':';
         }
-        oss << std::hex << std::nouppercase << group;
+        oss << std::hex << std::nouppercase << groups[i];
     }
 
     std::string result = oss.str();

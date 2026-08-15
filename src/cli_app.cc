@@ -237,11 +237,11 @@ int IPAnalyzerApp::RunFromStdin()
         std::println("[");
     }
 
-    for (const auto [index, line] : std::views::enumerate(inputs))
+    for (size_t index : std::views::iota(size_t{0}, inputs.size()))
     {
         try
         {
-            IPAnalyzer analyzer(line);
+            IPAnalyzer analyzer(inputs[index]);
             if (output_json_)
             {
                 if (emitted_json_object)
