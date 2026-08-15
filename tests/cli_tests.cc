@@ -240,7 +240,7 @@ TEST_CASE("IPv4-mapped JSON scope", "[cli]") {
     REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("\"private\": true"));
 }
 
-TEST_CASE("--ip does not consume following flags", "[cli]") {
+TEST_CASE("CLI ip option does not consume following flags", "[cli]") {
     using namespace ip_analyzer;
 
     SECTION("--ip --json <address> emits JSON") {
