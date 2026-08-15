@@ -9,6 +9,7 @@
 #include <sstream>
 #include <bitset>
 #include <bit>
+#include <compare>
 #include <algorithm>
 #include <ranges>
 #include <regex>
@@ -17,6 +18,8 @@
 #include <limits>
 #include <charconv>
 #include <system_error>
+#include <optional>
+#include <utility>
 
 uint32_t IPAnalyzer::calculate_ipv4_network(uint32_t ip_int, uint8_t cidr)
 {
@@ -759,4 +762,467 @@ bool IPv4Address::is_private() const
     return (ip & 0xFF000000) == 0x0A000000 ||
            (ip & 0xFFF00000) == 0xAC100000 ||
            (ip & 0xFFFF0000) == 0xC0A80000;
+}
+
+namespace {
+
+constexpr bool is_space(char c) noexcept
+{
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+}
+
+std::string_view trim_view(std::string_view sv) noexcept
+{
+    while (!sv.empty() && is_space(sv.front()))
+    {
+        sv.remove_prefix(1);
+    }
+    while (!sv.empty() && is_space(sv.back()))
+    {
+        sv.remove_suffix(1);
+    }
+    return sv;
+}
+
+std::array<uint8_t, 16> apply_ipv6_prefix(std::array<uint8_t, 16> bytes, uint8_t cidr)
+{
+    const int full_bytes = cidr / 8;
+    const int remaining_bits = cidr % 8;
+    if (remaining_bits > 0)
+    {
+        bytes[full_bytes] &= static_cast<uint8_t>(0xFF << (8 - remaining_bits));
+    }
+    const auto host_offset =
+        static_cast<size_t>(full_bytes + (remaining_bits > 0 ? 1 : 0));
+    std::ranges::fill(bytes | std::views::drop(host_offset), 0);
+    return bytes;
+}
+
+void increment_ipv6(std::array<uint8_t, 16> &bytes)
+{
+    for (uint8_t &byte : bytes | std::views::reverse)
+    {
+        if (++byte != 0)
+        {
+            break;
+        }
+    }
+}
+
+struct UInt128
+{
+    uint64_t hi{0};
+    uint64_t lo{0};
+
+    static UInt128 from_u64(uint64_t value) { return {0, value}; }
+
+    static UInt128 from_bytes(const std::array<uint8_t, 16> &bytes)
+    {
+        UInt128 value;
+        for (int i = 0; i < 8; ++i)
+        {
+            value.hi = (value.hi << 8) | bytes[static_cast<size_t>(i)];
+            value.lo = (value.lo << 8) | bytes[static_cast<size_t>(i + 8)];
+        }
+        return value;
+    }
+
+    [[nodiscard]] std::array<uint8_t, 16> to_bytes() const
+    {
+        std::array<uint8_t, 16> bytes{};
+        uint64_t high = hi;
+        uint64_t low = lo;
+        for (int i = 7; i >= 0; --i)
+        {
+            bytes[static_cast<size_t>(i)] = static_cast<uint8_t>(high & 0xFF);
+            bytes[static_cast<size_t>(i + 8)] = static_cast<uint8_t>(low & 0xFF);
+            high >>= 8;
+            low >>= 8;
+        }
+        return bytes;
+    }
+
+    friend constexpr bool operator==(const UInt128 &, const UInt128 &) = default;
+    friend constexpr std::strong_ordering operator<=>(const UInt128 &lhs,
+                                                      const UInt128 &rhs)
+    {
+        if (lhs.hi != rhs.hi)
+        {
+            return lhs.hi <=> rhs.hi;
+        }
+        return lhs.lo <=> rhs.lo;
+    }
+
+    [[nodiscard]] UInt128 operator+(const UInt128 &other) const
+    {
+        UInt128 result;
+        result.lo = lo + other.lo;
+        result.hi = hi + other.hi + (result.lo < lo ? 1 : 0);
+        return result;
+    }
+
+    [[nodiscard]] UInt128 operator-(const UInt128 &other) const
+    {
+        UInt128 result;
+        result.lo = lo - other.lo;
+        result.hi = hi - other.hi - (lo < other.lo ? 1 : 0);
+        return result;
+    }
+
+    [[nodiscard]] UInt128 operator<<(int shift) const
+    {
+        if (shift <= 0)
+        {
+            return *this;
+        }
+        if (shift >= 128)
+        {
+            return {};
+        }
+        if (shift >= 64)
+        {
+            return {lo << (shift - 64), 0};
+        }
+        return {(hi << shift) | (lo >> (64 - shift)), lo << shift};
+    }
+
+    [[nodiscard]] int countr_zero() const
+    {
+        if (lo != 0)
+        {
+            return static_cast<int>(std::countr_zero(lo));
+        }
+        if (hi != 0)
+        {
+            return 64 + static_cast<int>(std::countr_zero(hi));
+        }
+        return 128;
+    }
+
+    [[nodiscard]] int bit_width() const
+    {
+        if (hi != 0)
+        {
+            return 64 + static_cast<int>(std::bit_width(hi));
+        }
+        return static_cast<int>(std::bit_width(lo));
+    }
+};
+
+std::vector<std::string> summarize_ipv4(uint32_t start, uint32_t end)
+{
+    std::vector<std::string> prefixes;
+    while (start <= end)
+    {
+        if (start == 0 && end == 0xFFFFFFFFU)
+        {
+            prefixes.emplace_back("0.0.0.0/0");
+            break;
+        }
+
+        const int align_bits = (start == 0) ? 32 : std::countr_zero(start);
+        const uint32_t remaining = end - start;
+        const int size_bits = (remaining == 0xFFFFFFFFU && start == 0)
+                                  ? 32
+                                  : static_cast<int>(std::bit_width(remaining + 1U)) - 1;
+        const int host_bits = std::min(align_bits, size_bits);
+        const int prefix = 32 - host_bits;
+        prefixes.push_back(IPv4Address(start).to_string() + "/" + std::to_string(prefix));
+
+        if (host_bits == 32)
+        {
+            break;
+        }
+        const uint32_t block = 1U << host_bits;
+        if (start > 0xFFFFFFFFU - block)
+        {
+            break;
+        }
+        start += block;
+    }
+    return prefixes;
+}
+
+std::vector<std::string> summarize_ipv6(UInt128 start, UInt128 end)
+{
+    std::vector<std::string> prefixes;
+    const UInt128 max{~0ULL, ~0ULL};
+    const UInt128 one = UInt128::from_u64(1);
+
+    while (start <= end)
+    {
+        if (start == UInt128{} && end == max)
+        {
+            prefixes.emplace_back("::/0");
+            break;
+        }
+
+        const int align_bits = (start == UInt128{}) ? 128 : start.countr_zero();
+        const UInt128 remaining = end - start;
+        const int size_bits = (remaining == max)
+                                  ? 128
+                                  : (remaining + one).bit_width() - 1;
+        const int host_bits = std::min(align_bits, size_bits);
+        const int prefix = 128 - host_bits;
+        prefixes.push_back(IPv6Address(start.to_bytes()).to_string() + "/" +
+                           std::to_string(prefix));
+
+        if (host_bits == 128)
+        {
+            break;
+        }
+        const UInt128 next = start + (one << host_bits);
+        if (next < start || next > end)
+        {
+            break;
+        }
+        start = next;
+    }
+    return prefixes;
+}
+
+} // namespace
+
+bool IPAnalyzer::contains(const IPAnalyzer &other) const
+{
+    if (ip_->is_ipv4() != other.ip_->is_ipv4())
+    {
+        throw std::invalid_argument("Address family mismatch");
+    }
+    if (cidr_ > other.cidr_)
+    {
+        return false;
+    }
+
+    if (ip_->is_ipv4())
+    {
+        const auto ours =
+            std::dynamic_pointer_cast<IPv4Address>(get_network())->to_uint32();
+        const auto theirs =
+            std::dynamic_pointer_cast<IPv4Address>(other.get_network())->to_uint32();
+        return calculate_ipv4_network(theirs, cidr_) == ours;
+    }
+
+    const auto ours =
+        std::dynamic_pointer_cast<IPv6Address>(get_network())->to_bytes();
+    const auto theirs =
+        std::dynamic_pointer_cast<IPv6Address>(other.get_network())->to_bytes();
+    return apply_ipv6_prefix(theirs, cidr_) == ours;
+}
+
+bool IPAnalyzer::overlaps(const IPAnalyzer &other) const
+{
+    if (ip_->is_ipv4() != other.ip_->is_ipv4())
+    {
+        throw std::invalid_argument("Address family mismatch");
+    }
+
+    const uint8_t shorter = std::min(cidr_, other.cidr_);
+    if (ip_->is_ipv4())
+    {
+        const auto ours =
+            std::dynamic_pointer_cast<IPv4Address>(get_network())->to_uint32();
+        const auto theirs =
+            std::dynamic_pointer_cast<IPv4Address>(other.get_network())->to_uint32();
+        return calculate_ipv4_network(ours, shorter) ==
+               calculate_ipv4_network(theirs, shorter);
+    }
+
+    const auto ours =
+        std::dynamic_pointer_cast<IPv6Address>(get_network())->to_bytes();
+    const auto theirs =
+        std::dynamic_pointer_cast<IPv6Address>(other.get_network())->to_bytes();
+    return apply_ipv6_prefix(ours, shorter) == apply_ipv6_prefix(theirs, shorter);
+}
+
+std::vector<std::string> IPAnalyzer::list_usable_hosts(uint64_t max_count) const
+{
+    const uint64_t count = get_num_hosts();
+    if (count > max_count)
+    {
+        throw std::invalid_argument("Host list exceeds the configured safety limit");
+    }
+
+    const auto [first, last] = get_host_range();
+    std::vector<std::string> hosts;
+    hosts.reserve(static_cast<size_t>(count));
+
+    if (ip_->is_ipv4())
+    {
+        uint32_t current =
+            std::dynamic_pointer_cast<IPv4Address>(first)->to_uint32();
+        const uint32_t stop =
+            std::dynamic_pointer_cast<IPv4Address>(last)->to_uint32();
+        while (true)
+        {
+            hosts.push_back(IPv4Address(current).to_string());
+            if (current == stop)
+            {
+                break;
+            }
+            ++current;
+        }
+        return hosts;
+    }
+
+    auto current = std::dynamic_pointer_cast<IPv6Address>(first)->to_bytes();
+    const auto stop = std::dynamic_pointer_cast<IPv6Address>(last)->to_bytes();
+    while (true)
+    {
+        hosts.push_back(IPv6Address(current).to_string());
+        if (current == stop)
+        {
+            break;
+        }
+        increment_ipv6(current);
+    }
+    return hosts;
+}
+
+std::optional<std::pair<std::string, std::string>>
+IPAnalyzer::parse_address_range(std::string_view input)
+{
+    input = trim_view(input);
+    if (input.empty())
+    {
+        return std::nullopt;
+    }
+
+    std::string_view first;
+    std::string_view last;
+    const auto spaced = input.find(" - ");
+    if (spaced != std::string_view::npos)
+    {
+        first = input.substr(0, spaced);
+        last = input.substr(spaced + 3);
+    }
+    else
+    {
+        const auto hyphen = input.find('-');
+        if (hyphen == std::string_view::npos)
+        {
+            return std::nullopt;
+        }
+        first = input.substr(0, hyphen);
+        last = input.substr(hyphen + 1);
+    }
+
+    first = trim_view(first);
+    last = trim_view(last);
+    if (first.empty() || last.empty())
+    {
+        return std::nullopt;
+    }
+    return std::pair<std::string, std::string>{std::string(first), std::string(last)};
+}
+
+std::vector<std::string> IPAnalyzer::cidrs_covering_range(std::string_view first,
+                                                          std::string_view last)
+{
+    const IPAnalyzer start(first);
+    const IPAnalyzer stop(last);
+    if (start.get_ip()->is_ipv4() != stop.get_ip()->is_ipv4())
+    {
+        throw std::invalid_argument("Address family mismatch");
+    }
+
+    if (start.get_ip()->is_ipv4())
+    {
+        const uint32_t a =
+            std::dynamic_pointer_cast<IPv4Address>(start.get_ip())->to_uint32();
+        const uint32_t b =
+            std::dynamic_pointer_cast<IPv4Address>(stop.get_ip())->to_uint32();
+        if (a > b)
+        {
+            throw std::invalid_argument("Range start is after end");
+        }
+        return summarize_ipv4(a, b);
+    }
+
+    const auto a = UInt128::from_bytes(
+        std::dynamic_pointer_cast<IPv6Address>(start.get_ip())->to_bytes());
+    const auto b = UInt128::from_bytes(
+        std::dynamic_pointer_cast<IPv6Address>(stop.get_ip())->to_bytes());
+    if (a > b)
+    {
+        throw std::invalid_argument("Range start is after end");
+    }
+    return summarize_ipv6(a, b);
+}
+
+std::vector<std::string> IPAnalyzer::list_addresses_in_range(std::string_view first,
+                                                             std::string_view last,
+                                                             uint64_t max_count)
+{
+    const IPAnalyzer start(first);
+    const IPAnalyzer stop(last);
+    if (start.get_ip()->is_ipv4() != stop.get_ip()->is_ipv4())
+    {
+        throw std::invalid_argument("Address family mismatch");
+    }
+
+    if (start.get_ip()->is_ipv4())
+    {
+        const uint32_t a =
+            std::dynamic_pointer_cast<IPv4Address>(start.get_ip())->to_uint32();
+        const uint32_t b =
+            std::dynamic_pointer_cast<IPv4Address>(stop.get_ip())->to_uint32();
+        if (a > b)
+        {
+            throw std::invalid_argument("Range start is after end");
+        }
+        const uint64_t count = static_cast<uint64_t>(b) - a + 1;
+        if (count > max_count)
+        {
+            throw std::invalid_argument("Host list exceeds the configured safety limit");
+        }
+        std::vector<std::string> hosts;
+        hosts.reserve(static_cast<size_t>(count));
+        uint32_t current = a;
+        while (true)
+        {
+            hosts.push_back(IPv4Address(current).to_string());
+            if (current == b)
+            {
+                break;
+            }
+            ++current;
+        }
+        return hosts;
+    }
+
+    const auto a = UInt128::from_bytes(
+        std::dynamic_pointer_cast<IPv6Address>(start.get_ip())->to_bytes());
+    const auto b = UInt128::from_bytes(
+        std::dynamic_pointer_cast<IPv6Address>(stop.get_ip())->to_bytes());
+    if (a > b)
+    {
+        throw std::invalid_argument("Range start is after end");
+    }
+    const UInt128 max{~0ULL, ~0ULL};
+    const UInt128 one = UInt128::from_u64(1);
+    if (a == UInt128{} && b == max)
+    {
+        throw std::invalid_argument("Host list exceeds the configured safety limit");
+    }
+    const UInt128 span = (b - a) + one;
+    if (span.hi != 0 || span.lo > max_count)
+    {
+        throw std::invalid_argument("Host list exceeds the configured safety limit");
+    }
+
+    std::vector<std::string> hosts;
+    hosts.reserve(static_cast<size_t>(span.lo));
+    auto current = a.to_bytes();
+    const auto stop_bytes = b.to_bytes();
+    while (true)
+    {
+        hosts.push_back(IPv6Address(current).to_string());
+        if (current == stop_bytes)
+        {
+            break;
+        }
+        increment_ipv6(current);
+    }
+    return hosts;
 }

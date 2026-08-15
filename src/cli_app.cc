@@ -109,12 +109,20 @@ void IPAnalyzerApp::PrintHelp() const
     std::println("  --compact          Use compact, non-decorated output");
     std::println("  --no-color         Disable colored output");
     std::println("  --stdin            Read IP/CIDR values from stdin");
-    std::println("  --ip <value>       Provide the IP/CIDR without prompting\n");
+    std::println("  --ip <value>       Provide the IP/CIDR without prompting");
+    std::println("  --contains <ip>    Test whether <ip> or CIDR is inside the subject");
+    std::println("  --overlaps <cidr>  Test whether <cidr> overlaps the subject");
+    std::println("  --range <start-end> Convert an inclusive address range to CIDRs");
+    std::println("  --list-ips         Print usable hosts, or every address in a range\n");
     std::println("Examples:");
     std::println("  {} 192.168.1.1/24", kAppName);
     std::println("  {} 2001:db8::1/64", kAppName);
     std::println("  {} 2001:db8::/64", kAppName);
     std::println("  {} --interactive", kAppName);
+    std::println("  {} 192.168.1.0/24 --contains 192.168.1.10", kAppName);
+    std::println("  {} 192.168.1.0/24 --overlaps 192.168.1.128/25", kAppName);
+    std::println("  {} 192.168.1.10-192.168.1.50", kAppName);
+    std::println("  {} 192.168.1.0/30 --list-ips", kAppName);
 }
 
 void IPAnalyzerApp::PrintResults(const IPAnalyzer &analyzer) const
@@ -241,7 +249,79 @@ int IPAnalyzerApp::RunFromStdin()
     {
         try
         {
+            if (const auto range = IPAnalyzer::parse_address_range(inputs[index]))
+            {
+                if (has_contains_ || has_overlaps_)
+                {
+                    PrintError("Cannot combine an address range with --contains or --overlaps");
+                    return 1;
+                }
+                if (output_json_)
+                {
+                    if (emitted_json_object)
+                    {
+                        std::println(",");
+                    }
+                }
+                else if (index > 0)
+                {
+                    std::print("\n");
+                }
+                const int rc = list_ips_
+                                   ? RunListIpsRange(range->first, range->second)
+                                   : RunRangeToCidr(range->first, range->second);
+                if (rc != 0)
+                {
+                    return rc;
+                }
+                emitted_json_object = true;
+                continue;
+            }
+
             IPAnalyzer analyzer(inputs[index]);
+            if (has_contains_ || has_overlaps_)
+            {
+                if (output_json_)
+                {
+                    if (emitted_json_object)
+                    {
+                        std::println(",");
+                    }
+                }
+                else if (index > 0)
+                {
+                    std::print("\n");
+                }
+                const int rc = has_contains_
+                                   ? RunContains(analyzer, contains_target_)
+                                   : RunOverlaps(analyzer, overlaps_target_);
+                if (rc != 0)
+                {
+                    return rc;
+                }
+                emitted_json_object = true;
+                continue;
+            }
+            if (list_ips_)
+            {
+                if (output_json_)
+                {
+                    if (emitted_json_object)
+                    {
+                        std::println(",");
+                    }
+                }
+                else if (index > 0)
+                {
+                    std::print("\n");
+                }
+                if (RunListIps(analyzer) != 0)
+                {
+                    return 1;
+                }
+                emitted_json_object = true;
+                continue;
+            }
             if (output_json_)
             {
                 if (emitted_json_object)
@@ -329,5 +409,152 @@ void IPAnalyzerApp::PrintError(const std::string &message) const
         std::println("Error: {}", message);
     }
 }
+
+
+void IPAnalyzerApp::PrintRelation(std::string_view operation, std::string_view subject,
+                                  std::string_view other, std::string_view other_label,
+                                  bool result) const
+{
+    if (output_json_)
+    {
+        std::println("{{");
+        std::println("  \"schema\": \"ip-analyzer/1\",");
+        std::println("  \"version\": \"{}\",", kVersion);
+        std::println("  \"operation\": \"{}\",", operation);
+        std::println("  \"subject\": \"{}\",", subject);
+        std::println("  \"{}\": \"{}\",", other_label, other);
+        std::println("  \"result\": {}", result ? "true" : "false");
+        std::println("}}");
+        return;
+    }
+
+    if (compact_)
+    {
+        std::println("{}: {}", operation, result ? "true" : "false");
+        return;
+    }
+
+    const std::string title = result ? "Yes" : "No";
+    PrintHeader("IP Relation", color_enabled_);
+    PrintRow("Subject", std::string(subject), "", color_enabled_);
+    PrintRow(std::string(other_label), std::string(other), "", color_enabled_);
+    PrintRow(std::string(operation), title, "", color_enabled_);
+    PrintCopperBar(color_enabled_);
+}
+
+int IPAnalyzerApp::RunContains(const IPAnalyzer &subject, std::string_view candidate)
+{
+    const IPAnalyzer other(candidate);
+    const bool result = subject.contains(other);
+    const std::string subject_text =
+        subject.get_network()->to_string() + "/" + std::to_string(subject.get_cidr());
+    PrintRelation("contains", subject_text, candidate, "candidate", result);
+    return 0;
+}
+
+int IPAnalyzerApp::RunOverlaps(const IPAnalyzer &subject, std::string_view other)
+{
+    const IPAnalyzer candidate(other);
+    const bool result = subject.overlaps(candidate);
+    const std::string subject_text =
+        subject.get_network()->to_string() + "/" + std::to_string(subject.get_cidr());
+    PrintRelation("overlaps", subject_text, other, "other", result);
+    return 0;
+}
+
+int IPAnalyzerApp::RunListIps(const IPAnalyzer &subject)
+{
+    const auto hosts = subject.list_usable_hosts();
+    const std::string network =
+        subject.get_network()->to_string() + "/" + std::to_string(subject.get_cidr());
+    if (output_json_)
+    {
+        PrintIpListJson(network, "", hosts, false);
+        return 0;
+    }
+    for (const auto &host : hosts)
+    {
+        std::println("{}", host);
+    }
+    return 0;
+}
+
+int IPAnalyzerApp::RunListIpsRange(std::string_view first, std::string_view last)
+{
+    const auto hosts = IPAnalyzer::list_addresses_in_range(first, last);
+    if (output_json_)
+    {
+        PrintIpListJson(first, last, hosts, true);
+        return 0;
+    }
+    for (const auto &host : hosts)
+    {
+        std::println("{}", host);
+    }
+    return 0;
+}
+
+void IPAnalyzerApp::PrintIpListJson(std::string_view network_or_first, std::string_view last,
+                                    const std::vector<std::string> &hosts, bool is_range) const
+{
+    std::println("{{");
+    std::println("  \"schema\": \"ip-analyzer/1\",");
+    std::println("  \"version\": \"{}\",", kVersion);
+    std::println("  \"operation\": \"list_ips\",");
+    if (is_range)
+    {
+        std::println("  \"first\": \"{}\",", network_or_first);
+        std::println("  \"last\": \"{}\",", last);
+    }
+    else
+    {
+        std::println("  \"network\": \"{}\",", network_or_first);
+    }
+    std::println("  \"count\": {},", hosts.size());
+    std::print("  \"ips\": [");
+    for (size_t i : std::views::iota(size_t{0}, hosts.size()))
+    {
+        if (i > 0)
+        {
+            std::print(", ");
+        }
+        std::print("\"{}\"", hosts[i]);
+    }
+    std::println("]");
+    std::println("}}");
+}
+
+int IPAnalyzerApp::RunRangeToCidr(std::string_view first, std::string_view last)
+{
+    const auto prefixes = IPAnalyzer::cidrs_covering_range(first, last);
+    if (output_json_)
+    {
+        std::println("{{");
+        std::println("  \"schema\": \"ip-analyzer/1\",");
+        std::println("  \"version\": \"{}\",", kVersion);
+        std::println("  \"operation\": \"range_to_cidr\",");
+        std::println("  \"first\": \"{}\",", first);
+        std::println("  \"last\": \"{}\",", last);
+        std::print("  \"cidrs\": [");
+        for (size_t i : std::views::iota(size_t{0}, prefixes.size()))
+        {
+            if (i > 0)
+            {
+                std::print(", ");
+            }
+            std::print("\"{}\"", prefixes[i]);
+        }
+        std::println("]");
+        std::println("}}");
+        return 0;
+    }
+
+    for (const auto &prefix : prefixes)
+    {
+        std::println("{}", prefix);
+    }
+    return 0;
+}
+
 
 }

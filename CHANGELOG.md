@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.9
+- Add `--contains` and `--overlaps` to test CIDR containment and intersection.
+- Convert inclusive address ranges (`192.168.1.10-192.168.1.50` or `--range`) to a minimal CIDR set.
+- Add `--list-ips` to emit usable host addresses or every address in a range, with a 2^20 safety limit.
+
 ## 0.1.8
 - Stop `--ip` from consuming the following CLI flag as an address value.
 - Keep `--stdin --json` output valid when a later line fails (no trailing comma; errors on stderr).

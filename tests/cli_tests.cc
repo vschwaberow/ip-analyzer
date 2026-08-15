@@ -390,3 +390,157 @@ TEST_CASE("Version flag output", "[cli]") {
     REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring(std::string(kVersion)));
     REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring(std::string(kAuthor)));
 }
+
+TEST_CASE("CLI contains and overlaps relations", "[cli][relations]") {
+    using namespace ip_analyzer;
+
+    SECTION("Contains a host inside the subject") {
+        StdoutCapture capture;
+        constexpr std::array args = {
+            "ip-analyzer", "--compact", "--no-color",
+            "192.168.1.0/24", "--contains", "192.168.1.10"};
+        int result = IPAnalyzerApp().Run(std::span(args));
+        std::string output = capture.get_output();
+
+        REQUIRE(result == 0);
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("contains: true"));
+    }
+
+    SECTION("Contains rejects an address outside the subject") {
+        StdoutCapture capture;
+        constexpr std::array args = {
+            "ip-analyzer", "--compact", "--no-color",
+            "192.168.1.0/24", "--contains", "10.0.0.1"};
+        int result = IPAnalyzerApp().Run(std::span(args));
+        std::string output = capture.get_output();
+
+        REQUIRE(result == 0);
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("contains: false"));
+    }
+
+    SECTION("Overlaps adjacent slash-25 networks is false") {
+        StdoutCapture capture;
+        constexpr std::array args = {
+            "ip-analyzer", "--compact", "--no-color",
+            "192.168.1.0/25", "--overlaps", "192.168.1.128/25"};
+        int result = IPAnalyzerApp().Run(std::span(args));
+        std::string output = capture.get_output();
+
+        REQUIRE(result == 0);
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("overlaps: false"));
+    }
+
+    SECTION("JSON relation object") {
+        StdoutCapture capture;
+        constexpr std::array args = {
+            "ip-analyzer", "--json", "--no-color",
+            "--ip", "10.0.0.0/8", "--contains", "10.1.2.3"};
+        int result = IPAnalyzerApp().Run(std::span(args));
+        std::string output = capture.get_output();
+
+        REQUIRE(result == 0);
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("\"operation\": \"contains\""));
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("\"result\": true"));
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("\"schema\": \"ip-analyzer/1\""));
+    }
+}
+
+TEST_CASE("CLI range to CIDR and host listing", "[cli][range]") {
+    using namespace ip_analyzer;
+
+    SECTION("Hyphen range becomes a minimal prefix list") {
+        StdoutCapture capture;
+        constexpr std::array args = {
+            "ip-analyzer", "--no-color", "192.168.1.10-192.168.1.50"};
+        int result = IPAnalyzerApp().Run(std::span(args));
+        std::string output = capture.get_output();
+
+        REQUIRE(result == 0);
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("192.168.1.10/31"));
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("192.168.1.50/32"));
+        REQUIRE_THAT(output, !Catch::Matchers::ContainsSubstring("IP Address:"));
+    }
+
+    SECTION("Range flag JSON") {
+        StdoutCapture capture;
+        constexpr std::array args = {
+            "ip-analyzer", "--json", "--no-color",
+            "--range", "10.0.0.0-10.0.0.255"};
+        int result = IPAnalyzerApp().Run(std::span(args));
+        std::string output = capture.get_output();
+
+        REQUIRE(result == 0);
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("\"operation\": \"range_to_cidr\""));
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("10.0.0.0/24"));
+    }
+
+    SECTION("Spaced IPv6 range with list-ips") {
+        StdoutCapture capture;
+        constexpr std::array args = {
+            "ip-analyzer", "--no-color", "2001:db8::1 - 2001:db8::5", "--list-ips"};
+        int result = IPAnalyzerApp().Run(std::span(args));
+        std::string output = capture.get_output();
+
+        REQUIRE(result == 0);
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("2001:db8::1"));
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("2001:db8::3"));
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("2001:db8::5"));
+        REQUIRE_THAT(output, !Catch::Matchers::ContainsSubstring("multiple"));
+    }
+
+    SECTION("List usable hosts one per line") {
+        StdoutCapture capture;
+        constexpr std::array args = {
+            "ip-analyzer", "--no-color", "192.168.1.0/30", "--list-ips"};
+        int result = IPAnalyzerApp().Run(std::span(args));
+        std::string output = capture.get_output();
+
+        REQUIRE(result == 0);
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("192.168.1.1"));
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("192.168.1.2"));
+        REQUIRE_THAT(output, !Catch::Matchers::ContainsSubstring("192.168.1.0\n"));
+        REQUIRE_THAT(output, !Catch::Matchers::ContainsSubstring("192.168.1.3"));
+    }
+
+    SECTION("Combining relation flags is rejected") {
+        StdoutCapture capture;
+        constexpr std::array args = {
+            "ip-analyzer", "192.168.1.0/24", "--contains", "192.168.1.1", "--list-ips"};
+        int result = IPAnalyzerApp().Run(std::span(args));
+        std::string output = capture.get_output();
+
+        REQUIRE(result == 1);
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("Cannot combine"));
+    }
+}
+
+TEST_CASE("CLI range input validation", "[cli][range]") {
+    using namespace ip_analyzer;
+
+    SECTION("Stdin range lines") {
+        std::istringstream input("2001:db8::1 - 2001:db8::5\n");
+        CinCapture cin_guard(input);
+
+        StdoutCapture capture;
+        constexpr std::array args = {
+            "ip-analyzer", "--stdin", "--no-color", "--list-ips"};
+        int result = IPAnalyzerApp().Run(std::span(args));
+        std::string output = capture.get_output();
+
+        REQUIRE(result == 0);
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("2001:db8::1"));
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("2001:db8::5"));
+        REQUIRE_THAT(output, !Catch::Matchers::ContainsSubstring("multiple"));
+    }
+
+    SECTION("Range flag without a hyphen is an error") {
+        StdoutCapture capture;
+        constexpr std::array args = {
+            "ip-analyzer", "--no-color", "--range", "192.168.1.1"};
+        int result = IPAnalyzerApp().Run(std::span(args));
+        std::string output = capture.get_output();
+
+        REQUIRE(result == 1);
+        REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("Invalid address range"));
+    }
+}

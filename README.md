@@ -13,6 +13,9 @@ IP Analyzer is a command-line tool that provides detailed information about IP a
 - Support IPv4 netmask notation (e.g., `/255.255.255.0`)
 - Offer JSON output and non-interactive `--ip` and `--stdin` modes
 - Provide `--compact` and `--no-color` output modes
+- Test containment and overlap (`--contains`, `--overlaps`)
+- Convert an inclusive address range to a minimal CIDR set
+- List usable host addresses (`--list-ips`)
 
 ## Prerequisites
 
@@ -80,6 +83,19 @@ You can process multiple inputs from stdin:
 ```bash
 printf "192.168.1.1/24\n2001:db8::1/64\n" | ./build/ip-analyzer --stdin --compact
 ```
+
+Containment, overlap, range aggregation, and host listing:
+
+```bash
+./build/ip-analyzer 192.168.1.0/24 --contains 192.168.1.10
+./build/ip-analyzer 192.168.1.0/24 --overlaps 192.168.1.128/25
+./build/ip-analyzer 192.168.1.10-192.168.1.50
+./build/ip-analyzer --range 2001:db8::1-2001:db8::5 --json
+./build/ip-analyzer 192.168.1.0/30 --list-ips
+./build/ip-analyzer --no-color "2001:db8::1 - 2001:db8::5" --list-ips
+```
+
+`--list-ips` prints one usable host per line and refuses networks larger than 1,048,576 hosts.
 
 ## Examples
 

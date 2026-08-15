@@ -8,9 +8,12 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
-#include <memory>
+#include <utility>
+#include <vector>
 
 class IPAddress
 {
@@ -65,6 +68,8 @@ private:
 class IPAnalyzer
 {
 public:
+    static constexpr uint64_t kDefaultMaxListedHosts = 1ULL << 20;
+
     explicit IPAnalyzer(std::string_view ip_cidr);
 
     [[nodiscard]] std::shared_ptr<IPAddress> get_ip() const;
@@ -75,6 +80,19 @@ public:
     [[nodiscard]] uint64_t get_num_hosts() const;
     [[nodiscard]] bool is_private() const;
     [[nodiscard]] uint8_t get_cidr() const;
+
+    [[nodiscard]] bool contains(const IPAnalyzer& other) const;
+    [[nodiscard]] bool overlaps(const IPAnalyzer& other) const;
+    [[nodiscard]] std::vector<std::string> list_usable_hosts(
+        uint64_t max_count = kDefaultMaxListedHosts) const;
+
+    [[nodiscard]] static std::optional<std::pair<std::string, std::string>>
+    parse_address_range(std::string_view input);
+    [[nodiscard]] static std::vector<std::string>
+    cidrs_covering_range(std::string_view first, std::string_view last);
+    [[nodiscard]] static std::vector<std::string>
+    list_addresses_in_range(std::string_view first, std::string_view last,
+                            uint64_t max_count = kDefaultMaxListedHosts);
 
 private:
     std::shared_ptr<IPAddress> ip_;

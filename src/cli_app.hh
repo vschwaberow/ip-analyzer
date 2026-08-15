@@ -29,7 +29,7 @@ template<typename T>
 concept StringLike = std::convertible_to<T, std::string_view>;
 
 constexpr std::string_view kAppName = "ip-analyzer";
-constexpr std::string_view kVersion = "0.1.8";
+constexpr std::string_view kVersion = "0.1.9";
 constexpr std::string_view kAuthor = "Volker Schwaberow <volker@schwaberow.de>";
 
 constexpr int kWidth = 80;
@@ -58,12 +58,32 @@ public:
 #else
         color_enabled_ = ::isatty(STDOUT_FILENO) != 0;
 #endif
-        bool expect_ip_value = false;
+        enum class PendingValue { None, Ip, Contains, Overlaps, Range };
+        PendingValue pending = PendingValue::None;
+
         for (std::string_view arg : args | std::views::drop(1)) {
-            if (expect_ip_value && !arg.starts_with('-')) {
-                input_ = std::string(arg);
-                has_input_ = true;
-                expect_ip_value = false;
+            if (pending != PendingValue::None && !arg.starts_with('-')) {
+                switch (pending) {
+                case PendingValue::Ip:
+                    input_ = std::string(arg);
+                    has_input_ = true;
+                    break;
+                case PendingValue::Contains:
+                    contains_target_ = std::string(arg);
+                    has_contains_ = true;
+                    break;
+                case PendingValue::Overlaps:
+                    overlaps_target_ = std::string(arg);
+                    has_overlaps_ = true;
+                    break;
+                case PendingValue::Range:
+                    range_input_ = std::string(arg);
+                    has_range_ = true;
+                    break;
+                case PendingValue::None:
+                    break;
+                }
+                pending = PendingValue::None;
                 continue;
             }
 
@@ -83,11 +103,28 @@ public:
                 color_enabled_ = false;
             } else if (arg == "--stdin") {
                 read_stdin_ = true;
+            } else if (arg == "--list-ips") {
+                list_ips_ = true;
             } else if (arg == "--ip") {
-                expect_ip_value = true;
+                pending = PendingValue::Ip;
             } else if (arg.starts_with("--ip=")) {
                 input_ = std::string(arg.substr(5));
                 has_input_ = true;
+            } else if (arg == "--contains") {
+                pending = PendingValue::Contains;
+            } else if (arg.starts_with("--contains=")) {
+                contains_target_ = std::string(arg.substr(11));
+                has_contains_ = true;
+            } else if (arg == "--overlaps") {
+                pending = PendingValue::Overlaps;
+            } else if (arg.starts_with("--overlaps=")) {
+                overlaps_target_ = std::string(arg.substr(11));
+                has_overlaps_ = true;
+            } else if (arg == "--range") {
+                pending = PendingValue::Range;
+            } else if (arg.starts_with("--range=")) {
+                range_input_ = std::string(arg.substr(8));
+                has_range_ = true;
             } else if (arg.starts_with("-")) {
                 if (arg.starts_with("--list-tests") ||
                     arg.starts_with("--reporter") ||
@@ -103,10 +140,41 @@ public:
             }
         }
 
-        if (expect_ip_value) {
+        if (pending == PendingValue::Ip) {
             PrintError("Missing value for --ip");
             PrintHelp();
             return 1;
+        }
+        if (pending == PendingValue::Contains) {
+            PrintError("Missing value for --contains");
+            PrintHelp();
+            return 1;
+        }
+        if (pending == PendingValue::Overlaps) {
+            PrintError("Missing value for --overlaps");
+            PrintHelp();
+            return 1;
+        }
+        if (pending == PendingValue::Range) {
+            PrintError("Missing value for --range");
+            PrintHelp();
+            return 1;
+        }
+
+        if (has_contains_ && has_overlaps_) {
+            PrintError("Cannot combine --contains and --overlaps");
+            PrintHelp();
+            return 1;
+        }
+        if ((has_contains_ || has_overlaps_) && (list_ips_ || has_range_)) {
+            PrintError("Cannot combine --contains or --overlaps with --list-ips or --range");
+            PrintHelp();
+            return 1;
+        }
+
+        if (has_range_) {
+            input_ = range_input_;
+            has_input_ = true;
         }
 
         if (interactive_ && (read_stdin_ || has_input_)) {
@@ -121,6 +189,12 @@ public:
             return 1;
         }
 
+        if (read_stdin_ && has_range_) {
+            PrintError("Cannot combine --stdin with --range");
+            PrintHelp();
+            return 1;
+        }
+
         if (read_stdin_) {
             return RunFromStdin();
         }
@@ -131,6 +205,10 @@ public:
                 if (!std::getline(std::cin, input_)) {
                     return 1;
                 }
+            } else if (has_contains_ || has_overlaps_ || list_ips_) {
+                PrintError("Missing IP/CIDR subject");
+                PrintHelp();
+                return 1;
             } else {
                 PrintHelp();
                 return 0;
@@ -138,7 +216,33 @@ public:
         }
 
         try {
+            if (const auto range = IPAnalyzer::parse_address_range(input_)) {
+                if (has_contains_ || has_overlaps_) {
+                    PrintError("Cannot combine an address range with --contains or --overlaps");
+                    PrintHelp();
+                    return 1;
+                }
+                if (list_ips_) {
+                    return RunListIpsRange(range->first, range->second);
+                }
+                return RunRangeToCidr(range->first, range->second);
+            }
+            if (has_range_) {
+                PrintError("Invalid address range");
+                PrintHelp();
+                return 1;
+            }
+
             IPAnalyzer analyzer(input_);
+            if (has_contains_) {
+                return RunContains(analyzer, contains_target_);
+            }
+            if (has_overlaps_) {
+                return RunOverlaps(analyzer, overlaps_target_);
+            }
+            if (list_ips_) {
+                return RunListIps(analyzer);
+            }
             if (output_json_) {
                 PrintJsonResults(analyzer);
             } else {
@@ -154,7 +258,14 @@ public:
 
 private:
     std::string input_;
+    std::string contains_target_;
+    std::string overlaps_target_;
+    std::string range_input_;
     bool has_input_ = false;
+    bool has_contains_ = false;
+    bool has_overlaps_ = false;
+    bool has_range_ = false;
+    bool list_ips_ = false;
     bool interactive_ = false;
     bool output_json_ = false;
     bool compact_ = false;
@@ -169,6 +280,16 @@ private:
     void PrintJsonObject(const IPAnalyzer &analyzer, const std::string &indent,
                          bool trailing_comma) const;
     int RunFromStdin();
+    int RunContains(const IPAnalyzer &subject, std::string_view candidate);
+    int RunOverlaps(const IPAnalyzer &subject, std::string_view other);
+    int RunListIps(const IPAnalyzer &subject);
+    int RunListIpsRange(std::string_view first, std::string_view last);
+    int RunRangeToCidr(std::string_view first, std::string_view last);
+    void PrintIpListJson(std::string_view network_or_first, std::string_view last,
+                         const std::vector<std::string> &hosts, bool is_range) const;
+    void PrintRelation(std::string_view operation, std::string_view subject,
+                       std::string_view other, std::string_view other_label,
+                       bool result) const;
     std::string GetIPv6Scope(const std::shared_ptr<IPAddress> &ip) const;
     void PrintError(const std::string &message) const;
 };

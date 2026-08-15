@@ -8,6 +8,7 @@
 #include <catch2/catch_all.hpp>
 #include "ip_analyzer.hh"
 #include <limits>
+#include <vector>
 
 TEST_CASE("IPv4Address construction and methods", "[ipv4address]") {
     IPv4Address ip("192.168.0.1");
@@ -257,4 +258,132 @@ TEST_CASE("IPv6 private address detection", "[ipv6address]") {
 
     IPv6Address ip3("fe80:0000:0000:0000:0000:0000:0000:0001");
     REQUIRE(ip3.is_private() == false);
+}
+
+TEST_CASE("IP relations contain and overlap", "[ipanalyzer][relations]") {
+    SECTION("Host and subnet containment") {
+        REQUIRE(IPAnalyzer("192.168.1.0/24").contains(IPAnalyzer("192.168.1.10")));
+        REQUIRE(IPAnalyzer("192.168.1.0/24").contains(IPAnalyzer("192.168.1.128/25")));
+        REQUIRE_FALSE(IPAnalyzer("192.168.1.0/24").contains(IPAnalyzer("192.168.2.1")));
+        REQUIRE_FALSE(IPAnalyzer("192.168.1.128/25").contains(IPAnalyzer("192.168.1.0/24")));
+        REQUIRE(IPAnalyzer("10.0.0.0/8").contains(IPAnalyzer("10.0.0.0/8")));
+    }
+
+    SECTION("IPv6 containment") {
+        REQUIRE(IPAnalyzer("2001:db8::/32").contains(IPAnalyzer("2001:db8:1::1")));
+        REQUIRE(IPAnalyzer("2001:db8::/32").contains(IPAnalyzer("2001:db8:aaaa::/48")));
+        REQUIRE_FALSE(IPAnalyzer("2001:db8::/32").contains(IPAnalyzer("2001:db9::1")));
+    }
+
+    SECTION("Overlap is symmetric and detects partial intersection") {
+        REQUIRE(IPAnalyzer("192.168.1.0/24").overlaps(IPAnalyzer("192.168.1.128/25")));
+        REQUIRE(IPAnalyzer("192.168.1.128/25").overlaps(IPAnalyzer("192.168.1.0/24")));
+        REQUIRE(IPAnalyzer("10.0.0.0/8").overlaps(IPAnalyzer("10.1.2.0/24")));
+        REQUIRE_FALSE(IPAnalyzer("192.168.1.0/25").overlaps(IPAnalyzer("192.168.1.128/25")));
+        REQUIRE(IPAnalyzer("2001:db8::/32").overlaps(IPAnalyzer("2001:db8:1::/48")));
+        REQUIRE_FALSE(IPAnalyzer("2001:db8::/33").overlaps(IPAnalyzer("2001:db8:8000::/33")));
+    }
+
+    SECTION("Family mismatch is an error") {
+        REQUIRE_THROWS_AS(IPAnalyzer("192.168.1.0/24").contains(IPAnalyzer("2001:db8::1")),
+                          std::invalid_argument);
+        REQUIRE_THROWS_AS(IPAnalyzer("192.168.1.0/24").overlaps(IPAnalyzer("2001:db8::/64")),
+                          std::invalid_argument);
+    }
+}
+
+TEST_CASE("Range to minimal CIDR prefixes", "[ipanalyzer][range]") {
+    SECTION("Classic IPv4 example") {
+        const auto prefixes =
+            IPAnalyzer::cidrs_covering_range("192.168.1.10", "192.168.1.50");
+        REQUIRE(prefixes == std::vector<std::string>{
+            "192.168.1.10/31",
+            "192.168.1.12/30",
+            "192.168.1.16/28",
+            "192.168.1.32/28",
+            "192.168.1.48/31",
+            "192.168.1.50/32",
+        });
+    }
+
+    SECTION("Aligned block, singleton, and full space") {
+        REQUIRE(IPAnalyzer::cidrs_covering_range("10.0.0.0", "10.0.0.255") ==
+                std::vector<std::string>{"10.0.0.0/24"});
+        REQUIRE(IPAnalyzer::cidrs_covering_range("192.168.1.1", "192.168.1.1") ==
+                std::vector<std::string>{"192.168.1.1/32"});
+        REQUIRE(IPAnalyzer::cidrs_covering_range("0.0.0.0", "255.255.255.255") ==
+                std::vector<std::string>{"0.0.0.0/0"});
+    }
+
+    SECTION("IPv6 ranges") {
+        REQUIRE(IPAnalyzer::cidrs_covering_range("2001:db8::1", "2001:db8::5") ==
+                std::vector<std::string>{
+                    "2001:db8::1/128",
+                    "2001:db8::2/127",
+                    "2001:db8::4/127",
+                });
+        REQUIRE(IPAnalyzer::cidrs_covering_range("2001:db8::", "2001:db8::ffff") ==
+                std::vector<std::string>{"2001:db8::/112"});
+    }
+
+    SECTION("Invalid ranges") {
+        REQUIRE_THROWS_AS(IPAnalyzer::cidrs_covering_range("192.168.1.50", "192.168.1.10"),
+                          std::invalid_argument);
+        REQUIRE_THROWS_AS(IPAnalyzer::cidrs_covering_range("192.168.1.1", "2001:db8::1"),
+                          std::invalid_argument);
+    }
+
+    SECTION("Range parser accepts hyphen and spaced hyphen") {
+        auto compact = IPAnalyzer::parse_address_range("192.168.1.10-192.168.1.50");
+        REQUIRE(compact.has_value());
+        REQUIRE(compact->first == "192.168.1.10");
+        REQUIRE(compact->second == "192.168.1.50");
+
+        auto spaced = IPAnalyzer::parse_address_range("  2001:db8::1 - 2001:db8::5  ");
+        REQUIRE(spaced.has_value());
+        REQUIRE(spaced->first == "2001:db8::1");
+        REQUIRE(spaced->second == "2001:db8::5");
+
+        REQUIRE_FALSE(IPAnalyzer::parse_address_range("192.168.1.0/24").has_value());
+    }
+}
+
+TEST_CASE("Usable host listing respects range and safety limit", "[ipanalyzer][list]") {
+    SECTION("IPv4 usable hosts") {
+        REQUIRE(IPAnalyzer("192.168.1.0/30").list_usable_hosts() ==
+                std::vector<std::string>{"192.168.1.1", "192.168.1.2"});
+        REQUIRE(IPAnalyzer("192.168.1.1/32").list_usable_hosts() ==
+                std::vector<std::string>{"192.168.1.1"});
+        REQUIRE(IPAnalyzer("192.168.1.0/31").list_usable_hosts() ==
+                std::vector<std::string>{"192.168.1.0", "192.168.1.1"});
+    }
+
+    SECTION("IPv6 usable hosts") {
+        REQUIRE(IPAnalyzer("2001:db8::/126").list_usable_hosts() ==
+                std::vector<std::string>{"2001:db8::1", "2001:db8::2"});
+        REQUIRE(IPAnalyzer("2001:db8::1/128").list_usable_hosts() ==
+                std::vector<std::string>{"2001:db8::1"});
+    }
+
+    SECTION("Safety limit") {
+        REQUIRE_THROWS_AS(IPAnalyzer("10.0.0.0/8").list_usable_hosts(), std::invalid_argument);
+        REQUIRE_THROWS_AS(IPAnalyzer("2001:db8::/64").list_usable_hosts(), std::invalid_argument);
+        REQUIRE_THROWS_AS(IPAnalyzer("192.168.0.0/24").list_usable_hosts(16),
+                          std::invalid_argument);
+    }
+}
+
+TEST_CASE("Inclusive range host listing", "[ipanalyzer][list]") {
+    REQUIRE(IPAnalyzer::list_addresses_in_range("2001:db8::1", "2001:db8::5") ==
+            std::vector<std::string>{
+                "2001:db8::1",
+                "2001:db8::2",
+                "2001:db8::3",
+                "2001:db8::4",
+                "2001:db8::5",
+            });
+    REQUIRE(IPAnalyzer::list_addresses_in_range("192.168.1.10", "192.168.1.12") ==
+            std::vector<std::string>{"192.168.1.10", "192.168.1.11", "192.168.1.12"});
+    REQUIRE_THROWS_AS(IPAnalyzer::list_addresses_in_range("10.0.0.0", "10.255.255.255"),
+                      std::invalid_argument);
 }
