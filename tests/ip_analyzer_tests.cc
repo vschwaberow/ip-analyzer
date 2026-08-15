@@ -238,6 +238,16 @@ TEST_CASE("Invalid IPv6 addresses and CIDR values", "[ipv6address]") {
     }
 }
 
+TEST_CASE("IPv4-mapped private address classification", "[ipv6address]") {
+    REQUIRE(IPv6Address("::ffff:192.168.1.1").is_private() == true);
+    REQUIRE(IPv6Address("::ffff:10.0.0.1").is_private() == true);
+    REQUIRE(IPv6Address("::ffff:172.16.5.1").is_private() == true);
+    REQUIRE(IPv6Address("::ffff:8.8.8.8").is_private() == false);
+    REQUIRE(IPv6Address("::ffff:192.0.2.128").is_ipv4_mapped() == true);
+    REQUIRE(IPv6Address("2001:db8::1").is_ipv4_mapped() == false);
+    REQUIRE(IPAnalyzer("::ffff:192.168.1.1").is_private() == true);
+}
+
 TEST_CASE("IPv6 private address detection", "[ipv6address]") {
     IPv6Address ip1("fd00:0000:0000:0000:0000:0000:0000:0001");
     REQUIRE(ip1.is_private() == true);

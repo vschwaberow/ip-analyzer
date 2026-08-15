@@ -269,18 +269,21 @@ constexpr int IPv6Address::hex_char_to_int(char c) {
 
 IPv6Address::IPv6Address(const std::array<uint8_t, 16> &bytes) : bytes_(bytes) {}
 
-std::string IPv6Address::to_string() const
+bool IPv6Address::is_ipv4_mapped() const
 {
-    bool is_ipv4_mapped = true;
     for (size_t index = 0; index < 10; ++index)
     {
         if (bytes_[index] != 0)
         {
-            is_ipv4_mapped = false;
-            break;
+            return false;
         }
     }
-    if (is_ipv4_mapped && bytes_[10] == 0xFF && bytes_[11] == 0xFF)
+    return bytes_[10] == 0xFF && bytes_[11] == 0xFF;
+}
+
+std::string IPv6Address::to_string() const
+{
+    if (is_ipv4_mapped())
     {
         std::ostringstream oss;
         oss << "::ffff:";
@@ -368,7 +371,16 @@ std::string IPv6Address::to_binary_string() const
 
 bool IPv6Address::is_private() const
 {
-    return (bytes_[0] == 0xFD || bytes_[0] == 0xFC);
+    if (is_ipv4_mapped())
+    {
+        const uint32_t embedded =
+            (static_cast<uint32_t>(bytes_[12]) << 24) |
+            (static_cast<uint32_t>(bytes_[13]) << 16) |
+            (static_cast<uint32_t>(bytes_[14]) << 8) |
+            static_cast<uint32_t>(bytes_[15]);
+        return IPv4Address(embedded).is_private();
+    }
+    return bytes_[0] == 0xFD || bytes_[0] == 0xFC;
 }
 
 std::array<uint8_t, 16> IPv6Address::to_bytes() const

@@ -2,6 +2,7 @@
 
 ## 0.1.7
 - Align IPv6 host counts with the usable host range (exclude network and last address for prefixes below /127).
+- Classify IPv4-mapped addresses (`::ffff:x.x.x.x`) using the embedded IPv4 private ranges and an `IPv4-Mapped` scope.
 
 ## 0.1.6
 - Modernize codebase to C++23 using standard `<print>`, `<format>`, and `<bit>` (`std::countl_one`, `std::countr_zero`).

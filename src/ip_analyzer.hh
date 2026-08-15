@@ -53,6 +53,7 @@ public:
     [[nodiscard]] bool is_ipv4() const override { return false; }
     [[nodiscard]] bool is_ipv6() const override { return true; }
     [[nodiscard]] std::array<uint8_t, 16> to_bytes() const;
+    [[nodiscard]] bool is_ipv4_mapped() const;
 
 private:
     std::array<uint8_t, 16> bytes_{};

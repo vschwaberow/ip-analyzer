@@ -209,6 +209,19 @@ TEST_CASE("Interactive mode handling", "[cli]") {
     }
 }
 
+TEST_CASE("IPv4-mapped JSON scope", "[cli]") {
+    using namespace ip_analyzer;
+
+    StdoutCapture capture;
+    constexpr std::array args = {"ip-analyzer", "--json", "--ip", "::ffff:192.168.1.1"};
+    int result = IPAnalyzerApp().Run(std::span(args));
+    std::string output = capture.get_output();
+
+    REQUIRE(result == 0);
+    REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("\"scope\": \"IPv4-Mapped\""));
+    REQUIRE_THAT(output, Catch::Matchers::ContainsSubstring("\"private\": true"));
+}
+
 TEST_CASE("JSON output contains schema and version", "[cli]") {
     using namespace ip_analyzer;
 
