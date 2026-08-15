@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.1.8
+- Keep `--stdin --json` output valid when a later line fails (no trailing comma; errors on stderr).
+
 ## 0.1.7
 - Align IPv6 host counts with the usable host range (exclude network and last address for prefixes below /127).
 - Classify IPv4-mapped addresses (`::ffff:x.x.x.x`) using the embedded IPv4 private ranges and an `IPv4-Mapped` scope.

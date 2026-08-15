@@ -231,6 +231,7 @@ int IPAnalyzerApp::RunFromStdin()
         return 1;
     }
 
+    bool emitted_json_object = false;
     if (output_json_)
     {
         std::println("[");
@@ -243,7 +244,12 @@ int IPAnalyzerApp::RunFromStdin()
             IPAnalyzer analyzer(line);
             if (output_json_)
             {
-                PrintJsonObject(analyzer, "  ", index + 1 < inputs.size());
+                if (emitted_json_object)
+                {
+                    std::println(",");
+                }
+                PrintJsonObject(analyzer, "  ", false);
+                emitted_json_object = true;
             }
             else
             {
@@ -259,8 +265,12 @@ int IPAnalyzerApp::RunFromStdin()
             if (output_json_)
             {
                 std::println("]");
+                std::println(stderr, "Error: {}", e.what());
             }
-            PrintError(e.what());
+            else
+            {
+                PrintError(e.what());
+            }
             return 1;
         }
     }
