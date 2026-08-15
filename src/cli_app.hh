@@ -60,7 +60,7 @@ public:
 #endif
         bool expect_ip_value = false;
         for (std::string_view arg : args | std::views::drop(1)) {
-            if (expect_ip_value) {
+            if (expect_ip_value && !arg.starts_with('-')) {
                 input_ = std::string(arg);
                 has_input_ = true;
                 expect_ip_value = false;

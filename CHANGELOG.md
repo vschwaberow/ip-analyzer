@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.1.8
+- Stop `--ip` from consuming the following CLI flag as an address value.
+
 ## 0.1.7
 - Align IPv6 host counts with the usable host range (exclude network and last address for prefixes below /127).
 - Classify IPv4-mapped addresses (`::ffff:x.x.x.x`) using the embedded IPv4 private ranges and an `IPv4-Mapped` scope.
