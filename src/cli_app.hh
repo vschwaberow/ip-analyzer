@@ -15,7 +15,12 @@
 #include <string_view>
 #include <vector>
 #include <span>
+#include <cstdio>
+#ifdef _WIN32
+#include <io.h>
+#else
 #include <unistd.h>
+#endif
 
 namespace ip_analyzer {
 
@@ -47,7 +52,11 @@ class IPAnalyzerApp {
 public:
     template<StringLike T, size_t Extent = std::dynamic_extent>
     int Run(std::span<T, Extent> args) {
+#ifdef _WIN32
+        color_enabled_ = _isatty(_fileno(stdout)) != 0;
+#else
         color_enabled_ = ::isatty(STDOUT_FILENO) != 0;
+#endif
         for (size_t i = 1; i < args.size(); ++i) {
             std::string_view arg{args[i]};
             

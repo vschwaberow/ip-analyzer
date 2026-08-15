@@ -8,77 +8,95 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <sstream>
 #include "cli_app.hh"
+#include <cstdio>
+#ifdef _WIN32
+#include <io.h>
+#include <fcntl.h>
+#else
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#endif
 
 class StdoutCapture {
 public:
     StdoutCapture() {
         fflush(stdout);
-        old_stdout = dup(STDOUT_FILENO);
-        
-        if (pipe(pipe_fds) != 0) {
+        old_stdout = DupFd(kStdoutFd);
+
+        if (CreatePipe(pipe_fds) != 0) {
             throw std::runtime_error("Failed to create pipe");
         }
-        
-        dup2(pipe_fds[1], STDOUT_FILENO);
-        close(pipe_fds[1]);
+
+        Dup2Fd(pipe_fds[1], kStdoutFd);
+        CloseFd(pipe_fds[1]);
         pipe_fds[1] = -1;
     }
-    
+
     ~StdoutCapture() {
         if (old_stdout != -1) {
             fflush(stdout);
-            dup2(old_stdout, STDOUT_FILENO);
-            close(old_stdout);
+            Dup2Fd(old_stdout, kStdoutFd);
+            CloseFd(old_stdout);
             old_stdout = -1;
         }
         if (pipe_fds[0] != -1) {
-            close(pipe_fds[0]);
+            CloseFd(pipe_fds[0]);
             pipe_fds[0] = -1;
         }
     }
-    
+
     std::string get_output() {
         fflush(stdout);
         if (old_stdout != -1) {
-            dup2(old_stdout, STDOUT_FILENO);
-            close(old_stdout);
+            Dup2Fd(old_stdout, kStdoutFd);
+            CloseFd(old_stdout);
             old_stdout = -1;
         }
 
-        int flags = fcntl(pipe_fds[0], F_GETFL);
-        fcntl(pipe_fds[0], F_SETFL, flags | O_NONBLOCK);
-        
         std::string result;
         char buffer[4096];
-        ssize_t bytes;
-        
-        int timeout = 100;
-        while (timeout > 0) {
-            bytes = read(pipe_fds[0], buffer, sizeof(buffer) - 1);
-            
+        while (true) {
+            const auto bytes = ReadFd(pipe_fds[0], buffer, sizeof(buffer) - 1);
             if (bytes > 0) {
                 buffer[bytes] = '\0';
                 result += buffer;
-            } else if (bytes == 0 || (bytes == -1 && errno != EAGAIN)) {
-                break;
             } else {
-                usleep(1000);
-                timeout--;
+                break;
             }
         }
-        
+
         if (pipe_fds[0] != -1) {
-            close(pipe_fds[0]);
+            CloseFd(pipe_fds[0]);
             pipe_fds[0] = -1;
         }
-        
+
         return result;
     }
-    
+
 private:
+#ifdef _WIN32
+    static constexpr int kStdoutFd = 1;
+
+    static int DupFd(int fd) { return _dup(fd); }
+    static int Dup2Fd(int oldfd, int newfd) { return _dup2(oldfd, newfd); }
+    static int CloseFd(int fd) { return _close(fd); }
+    static int CreatePipe(int fds[2]) { return _pipe(fds, 4096, _O_BINARY); }
+    static int ReadFd(int fd, char* buffer, unsigned int count) {
+        return _read(fd, buffer, count);
+    }
+#else
+    static constexpr int kStdoutFd = STDOUT_FILENO;
+
+    static int DupFd(int fd) { return dup(fd); }
+    static int Dup2Fd(int oldfd, int newfd) { return dup2(oldfd, newfd); }
+    static int CloseFd(int fd) { return close(fd); }
+    static int CreatePipe(int fds[2]) { return pipe(fds); }
+    static ssize_t ReadFd(int fd, char* buffer, size_t count) {
+        return read(fd, buffer, count);
+    }
+#endif
+
     int old_stdout = -1;
     int pipe_fds[2] = {-1, -1};
 };

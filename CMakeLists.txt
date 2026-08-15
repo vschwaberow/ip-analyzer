@@ -12,8 +12,10 @@ add_executable(ip-analyzer
 )
 target_include_directories(ip-analyzer PRIVATE src)
 
-if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    target_compile_options(ip-analyzer PRIVATE -O3 -march=native -mtune=native)
+if(MSVC)
+    target_compile_options(ip-analyzer PRIVATE $<$<CONFIG:Release>:/O2>)
+else()
+    target_compile_options(ip-analyzer PRIVATE $<$<CONFIG:Release>:-O3>)
 endif()
 
 enable_testing()
